@@ -859,17 +859,19 @@ def main():
                     raw_service['__translation_port'] = port
                     services.append(raw_service)
 
-            # Первое правило без измениния имени
+            # Первое правило без изменения имени
             single_service_rules.append(
                 convert_nat_rule(rule, services[0], rule['name'])
             )
 
-            # Если сервис не один, то остальные правила копируются с добвлением имени сервиса к имени правила
+            # Если сервис не один, то остальные правила копируются с добавлением имени сервиса к имени правила
             for service in services[1:]:
                 service_name = service['name'] if 'name' in service.keys() else ""
                 name = f"{rule['name']}_{service_name}"
-                copied_rule = convert_nat_rule(rule, service, name)
-                single_service_rules.append(copied_rule)
+                copied_rule = rule.copy()
+                single_service_rules.append(
+                    convert_nat_rule(copied_rule, service, name)
+                )
         else:
             # Сервисов вообще нет или это не NAT правило
             single_service_rules.append(rule)
