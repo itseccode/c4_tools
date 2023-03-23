@@ -507,10 +507,10 @@ def convert_nat_rule(rule, service, name):
     rule['service'] = [service]
     if rule['nat_type'] == 'dnat' and not service['__translation_port'] == '0':
         rule['port_type'] = 'service'
-        rule['port_value'] = service.copy()
-        rule['port_value']['name'] += f"_{service['__translation_port']}"
-        rule['port_value']['dst'] = service['__translation_port']
-        rule['port_value']['src'] = []
+        rule['port_value'] = [service.copy()]
+        rule['port_value'][0]['name'] += f"_{service['__translation_port']}"
+        rule['port_value'][0]['dst'] = service['__translation_port']
+        rule['port_value'][0]['src'] = []
     return rule
 
 
@@ -853,7 +853,7 @@ def main():
                 port = service.get('port', None)
                 if raw_service.get('type', None) == 'group':
                     for internal_service in raw_service['members']:
-                        internal_service['__translation_port'] = port
+                        internal_service['__translation_port'] = '0'
                     services.extend(raw_service['members'])
                 else:
                     raw_service['__translation_port'] = port
