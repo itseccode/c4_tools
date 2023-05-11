@@ -17,6 +17,12 @@ log = logging.getLogger(__name__)
 error_counter = {}
 node_id = 0
 node_name = ''
+registry_map = {
+    '0': False,
+    '1': True,
+    '2': True,
+    '3': False
+}
 proto_map = {
     'icmp': 1,
     'tcp': 6,
@@ -127,6 +133,12 @@ def add_to_list(list_object: list, added_object) -> list:
 
 def get_netmask(netmask):
     return sum(bin(int(x)).count('1') for x in netmask.split('.'))
+
+
+def str_to_bool(str):
+    if str.lower() in ['true', '1']:
+        return True
+    return False
 
 
 # Проверка описания на длину
@@ -437,10 +449,10 @@ def process_FilterRules(section):
             error_counter[section.tag]['error'] += 1
 
         if 'src_inverse' in rule_attribs.keys():
-            rule['is_inverse_src'] = bool(rule_attribs['src_inverse'])
+            rule['is_inverse_src'] = str_to_bool(rule_attribs['src_inverse'])
 
         if 'dst_inverse' in rule_attribs.keys():
-            rule['is_inverse_dst'] = bool(rule_attribs['dst_inverse'])
+            rule['is_inverse_dst'] = str_to_bool(rule_attribs['dst_inverse'])
 
         if 'action' in rule_attribs.keys():
             if rule_attribs['action'] == 'Deny':
@@ -449,7 +461,7 @@ def process_FilterRules(section):
                 rule['rule_action'] = 'pass'
 
         if 'registry' in rule_attribs.keys():
-            rule['logging'] = bool(rule_attribs['registry'])
+            rule['logging'] = registry_map.get(rule_attribs['registry'], False)
 
         if 'disabled' in rule_attribs.keys():
             rule['is_enabled'] = not rule_attribs['disabled']
