@@ -5,6 +5,7 @@ import sys
 import argparse
 import logging
 import pathlib
+import copy
 
 OUTPUT_FILENAME = "import-{}-{}-ver01.json"
 DEFAULT_MIN_PORT = 0
@@ -50,72 +51,11 @@ type_proto_dict = {
     'gtp_mm_v2': 17,
     'tcp_subservice': 6
 }
-icmp_type_dict = {
-    'Любой': None,
-    'Echo Reply': 0,
-    'Destination Unreachable': 3,
-    'Source Quench': 4,
-    'Redirect': 5,
-    'Alternate Host Address': 6,
-    'Echo': 8,
-    'Router Advertisement': 9,
-    'Router Solicitation': 10,
-    'Time Exceeded': 11,
-    'Parameter Problem': 12,
-    'Timestamp': 13,
-    'Timestamp Reply': 14,
-    'Information Request': 15,
-    'Information Reply': 16,
-    'Address Mask Request': 17,
-    'Address Mask Reply': 18,
-    'Traceroute': 30,
-    'Datagram Conversion Error': 31,
-    'Mobile Host Redirect': 32,
-    'IPv6 Where-Are-You': 33,
-    'IPv6 I-Am-Here': 34,
-    'Mobile Registration Request': 35,
-    'Mobile Registration Reply': 36
-}
-icmp_code_dict = {
-    3: {
-        'Net Unreachable': 0,
-        'Host Unreachable': 1,
-        'Protocol Unreachable': 2,
-        'Port Unreachable': 3,
-        'Fragmentation Needed and Don\'t Fragment was Set': 4,
-        'Source Route Failed': 5,
-        'Destination Network Unknown': 6,
-        'Host Unreachable': 7,
-        'Source Host Isolated': 8,
-        'Communication with Destination Network is Administratively Prohibited': 9,
-        'Communication with Destination Host is Administratively Prohibited': 10,
-        'Destination Network Unreachable for Type of Service': 11,
-        'Destination Host Unreachable for Type of Service': 12,
-        'Communication Administratively Prohibited': 13,
-        'Host Precedence Violation': 14,
-        'Precedence Сutoff in Effect': 15
-    },
-    5: {
-        'Redirect Network': 0,
-        'Redirect Host': 1,
-        'Redirect Network for TOS': 2,
-        'Redirect Host for TOS': 3
-    },
-    11: {
-        'TTL exceeded': 0,
-        'Fragment Reassembly Time Exceeded': 1
-    },
-    12: {
-        'Pointer indicates the error': 0,
-        'Missing a Required Option': 1,
-        'Bad Length ': 2
-    },
-}
 day_dict = {
     'Mon': 0,
     'Tue': 1,
     'Wed': 2,
-    'Thu':3,
+    'Thu': 3,
     'Fri': 4,
     'Sat': 5,
     'Sun': 6
@@ -384,7 +324,7 @@ def parse_rule(rule_dict, rule_type):
         'name': rule_dict['name'],
         'original_name': rule_dict['name'],
         'description': '',
-        'original_description': rule_dict['comments'],
+        'original_description': rule_dict.get('comments', ''),
         'is_enabled': False,
         '__internal_type': rule_type,
         'all_info_gates_use': [],
@@ -642,14 +582,8 @@ def process_Services(obj_dict, obj):
         obj['proto'] = type_proto_dict[protocol]
 
     if protocol == 'icmp':
-        original_type = obj_dict.get('icmp_type', None)
-        obj['icmp_type'] = icmp_type_dict.get(original_type, None)
-        obj['icmp_code'] = None
-
-        original_icmp_code = obj_dict.get('icmp_code', None)
-        icmp_code_chapter = icmp_code_dict.get(obj['icmp_type'], None)
-        if original_icmp_code and icmp_code_chapter:
-            obj['icmp_code'] = icmp_code_chapter.get(original_icmp_code, None)
+        obj['icmp_type'] = obj_dict.get('icmp_type', None)
+        obj['icmp_code'] = obj_dict.get('icmp_code', None)
 
     if protocol == 'other':
         if not 'protocol' in obj_dict.keys():
@@ -663,8 +597,7 @@ def process_Services(obj_dict, obj):
 
     if protocol in ['tcp', 'udp', 'rpc']:
         for field in ['src', 'dst']:
-            if field in obj.keys() and \
-               obj[field] == '0-65535':
+            if obj.get(field, '0-65535') == '0-65535':
                 obj[field] = ''
 
     obj['conversion_err'] = collect_conversion_err(obj_dict,
@@ -700,9 +633,9 @@ def process_Services(obj_dict, obj):
 
     if protocol == 'rpc':
         obj['dst'] = '111'
-        rpc_service1 = obj.copy()
+        rpc_service1 = copy.deepcopy(obj)
         rpc_service1['proto'] = type_proto_dict['tcp']
-        rpc_service2 = obj.copy()
+        rpc_service2 = copy.deepcopy(obj)
         rpc_service2['proto'] = type_proto_dict['udp']
         obj = [rpc_service1, rpc_service2]
 
@@ -994,7 +927,7 @@ def main():
             for object_id in group['members']:
                 for obj in objects:
                     if obj['id'] == object_id and obj['type'] == group['subtype']:
-                        added_object = obj.copy()
+                        added_object = copy.deepcopy(obj)
                         del added_object['id']
                         filled_section.append(added_object)
             group['members'] = filled_section
@@ -1017,9 +950,9 @@ def main():
                     # цикл по объектам
                     for obj in objects:
                         type_match = obj['type'] in members_types[section] or \
-                            ('subtype' in obj.keys() and obj['subtype'] in members_types[section])
+                            obj.get('subtype') in members_types[section]
                         if obj['id'] == object_id and type_match:
-                            added_object = obj.copy()
+                            added_object = copy.deepcopy(obj)
                             del added_object['id']
                             filled_section.append(added_object)
 
@@ -1030,7 +963,7 @@ def main():
     for rule in data:
         if 'service' in rule.keys() and len(rule['service']) > 1:
             for service in rule['service']:
-                copied_rule = rule.copy()
+                copied_rule = copy.deepcopy(rule)
                 service_name = service['name'] if 'name' in service.keys() else ""
                 copied_rule['name'] = f"{rule['name']}_{service_name}"
                 copied_rule['service'] = [service]
@@ -1120,4 +1053,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-    
