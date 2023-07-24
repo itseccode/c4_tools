@@ -14,6 +14,7 @@ os.system("")
 
 OUTPUT_FILENAME = "{}-{}-{}.json"
 MAX_DESCR_LEN = 1024
+MAX_OBJECTS_BORDER = 20000
 
 logging.basicConfig(encoding='utf-8', level=logging.INFO,
     format='%(asctime)s %(levelname)-8s %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
@@ -32,8 +33,8 @@ section_dict = {
 stats_header_dict = {
     'done': 'Успешно:',
     'warning': 'С предупреждениями:',
-    'error': 'С ошибками',
-    'output': 'В итоговом файле:'
+    'error': 'С ошибками:',
+    'output': 'Итого:'
 }
 rule_types_dict = {'access-rule': 'FilterRules', 'nat-rule': 'NatRules'}
 types_dict = {
@@ -62,7 +63,42 @@ day_dict = {
     'Sat': 5,
     'Sun': 6
 }
+icmp_available = {
+    3: [0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15],
+    5: [0, 1, 2, 3],
+    6: [0],
+    9: [0, 16],
+    11: [0, 1],
+    12: [0, 1, 2],
+    40: [0, 1, 2, 3, 4, 5],
+    42: [0],
+    43: [0, 1, 2, 3, 4]
+}
 
+def icmp_validate(icmp_type, icmp_code):
+    if icmp_type is None or icmp_code is None:
+        return True
+
+    if icmp_type in icmp_available.keys():
+        if icmp_code in icmp_available[icmp_type]:
+            return True
+
+    return False
 
 def draw_progress(i, min_i, max_i, size):
     sys.stdout.write("\033[G")
@@ -188,9 +224,9 @@ def print_report(filepath, objects, sections, members_sections):
 
 def print_stats():
     for header in stats_header_dict.keys():
-        log.info(stats_header_dict[header])
+        log.info(f"\t{stats_header_dict[header]}")
         for section in error_counter.keys():
-            log.info(f'\t{section_dict[section]}: {error_counter[section][header]}')
+            log.info(f'\t\t{section_dict[section]}: {error_counter[section][header]}')
 
 
 def parse_rules(rules_input_list):
@@ -382,9 +418,11 @@ def process_Services(obj_dict, obj):
     if obj['proto'] == service_types['service-icmp']:
         obj['icmp_type'] = obj_dict.get('icmp-type', None)
         obj['icmp_code'] = obj_dict.get('icmp-code', None)
+        if not icmp_validate(obj['icmp_type'], obj['icmp_code']):
+            return None
 
     if obj['proto'] in [ service_types['service-tcp'], service_types['service-udp'] ]:
-        obj['src'] = obj_dict.get('port', '')
+        obj['src'] = obj_dict.get('source-port', '')
         obj['dst'] = obj_dict.get('port', '')
 
     if obj['name'] == '':
@@ -407,7 +445,7 @@ def process_TimeIntervals(obj_dict, obj):
 
     if recurrence.get('pattern') == 'Weekly':
         for str_day in recurrence.get('weekdays', []):
-            days.append(day_dict.get(str_day))
+            days.append(day_dict.get(str_day, 0))
 
     if len(days) > 0:
         obj['intervals'] = []
@@ -547,6 +585,7 @@ def main():
     parser.add_argument('-o', '--output_path', help='Путь до папки для выходного файла', type=pathlib.Path)
     parser.add_argument('--log', help='Имя файла логирования', type=str)
     parser.add_argument('--name', help='Имя выходного файла', type=str)
+    parser.add_argument('--num_rule', help='Ограничение по количеству правил в файле.', type=int, default=0)
     parser.add_argument('--debug', default=False, action="store_true")
     args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
 
@@ -628,7 +667,7 @@ def main():
             for obj in objects:
                 if obj['id'] == object_id:
                     if obj['type'] == group['subtype']:
-                        filled_section.append(obj)
+                        filled_section.append(copy.deepcopy(obj))
                     elif obj['type'] == group['type'] and obj['subtype'] == group['subtype']:
                         filled_section.append(fill_group(objects, obj, section_name))
 
@@ -666,7 +705,7 @@ def main():
                         type_match = obj['type'] in members_types[section] or \
                             obj.get('subtype') in members_types[section]
                         if obj['id'] == object_id and type_match:
-                            filled_section.append(obj)
+                            filled_section.append(copy.deepcopy(obj))
 
                 rule[section] = filled_section
 
@@ -805,19 +844,104 @@ def main():
 
     del data
 
-    # Удаление служебных полей
-    if not args.debug:
-        service_fields = [
-            '__internal_type',
-            'id',
-            'original_name',
-            'original_description',
-            '__translation_port'
-        ]
-        remove_fields(fw_rules, service_fields, members_sections)
-        remove_fields(nat_rules, service_fields, members_sections)
+    def obj_count(list_obj, members_sections, c):
+        for obj in list_obj:
+            if not type(obj) == dict:
+                continue
 
-    def write_outdata(data, filename):
+            c += 1
+            for section in members_sections:
+                c = obj_count(
+                        obj.get(section, []),
+                        members_sections,
+                        c
+                    )
+
+        return c
+
+    # разбиение правил с отсечкой по 20к объектов и с ограничением по количеству правил
+    def split_rules(rules):
+        files_content = []
+        object_count = 0
+        rules_count = 0
+        part_of_rules = []
+        for rule in rules:
+            object_count += 1
+            if args.num_rule > 0:
+                rules_count += 1
+            for section in members_sections:
+                object_count = obj_count(
+                        rule.get(section, []),
+                        members_sections,
+                        object_count
+                    )
+
+            if object_count > MAX_OBJECTS_BORDER or rules_count > args.num_rule:
+                files_content.append(part_of_rules)
+                part_of_rules = [rule]
+                object_count -= MAX_OBJECTS_BORDER
+                rules_count -= args.num_rule
+            else:
+                part_of_rules.append(rule)
+
+        if len(part_of_rules) > 0:
+            files_content.append(part_of_rules)
+
+        return files_content
+
+    nat_files = split_rules(nat_rules)
+    del nat_rules
+
+    fw_files = split_rules(fw_rules)
+    del fw_rules
+
+    service_fields = [
+        '__internal_type',
+        'id',
+        'original_name',
+        'original_description',
+        '__translation_port'
+    ]
+
+    def write_output_rules(files_content, file_prefix, file_postfix):
+        def collect_stats(objs, stats):
+            for obj in objs:
+                if not type(obj) == dict:
+                    continue
+
+                obj_type = obj.get('__internal_type')
+                if not obj_type is None:
+                    stats[obj_type] += 1
+
+                for members_section in members_sections:
+                    if members_section in obj.keys():
+                        collect_stats(obj[members_section], stats)
+
+        if len(files_content) > 0:
+            i = 1
+            for file_content in files_content:
+                filename = path / OUTPUT_FILENAME.format(
+                    file_prefix,
+                    pathlib.Path(args.input[0]).stem,
+                    f"{file_postfix}{i if i > 1 else ''}")
+
+                stats = {}
+                for section in section_dict.keys():
+                    stats[section] = 0
+                collect_stats(file_content, stats)
+
+                log.info(f"Файл: {filename}")
+                log.info("\tВ промежуточном файле:")
+                for section in section_dict.keys():
+                    log.info(f"\t\t{section_dict[section]}: {stats[section]}")
+
+                if not args.debug:
+                    remove_fields(file_content, service_fields, members_sections)
+
+                write_outfile(file_content, filename)
+                i += 1
+
+    def write_outfile(data, filename):
         if filename.exists():
             log.info("Выходной файл найден, перезапись")
         with open(filename, "w", encoding="utf8") as f:
@@ -825,13 +949,8 @@ def main():
         log.info(f"Записан файл: {filename}")
 
     prefix = args.name if args.name else 'import'
-    if len(fw_rules) > 0:
-        filename = path / OUTPUT_FILENAME.format(prefix, pathlib.Path(args.input[0]).stem, 'fw')
-        write_outdata(fw_rules, filename)
-
-    if len(nat_rules) > 0:
-        filename = path / OUTPUT_FILENAME.format(prefix, pathlib.Path(args.input[0]).stem, 'nat')
-        write_outdata(nat_rules, filename)
+    write_output_rules(fw_files, prefix, 'fw')
+    write_output_rules(nat_files, prefix, 'nat')
 
     print_stats()
 
