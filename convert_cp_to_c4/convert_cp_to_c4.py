@@ -7,10 +7,11 @@ import logging
 import pathlib
 import copy
 
-OUTPUT_FILENAME = "import-{}-{}-ver01.json"
-DEFAULT_MIN_PORT = 0
-DEFAULT_MAX_PORT = 65535
+OUTPUT_FILENAME = "{}-{}-{}-{}.json"
+MIN_PORT = 0
+MAX_PORT = 65535
 MAX_DESCR_LEN = 1024
+MAX_OBJECTS_BORDER = 20000
 
 logging.basicConfig(encoding='utf-8', level=logging.INFO,
     format='%(asctime)s %(levelname)-8s %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
@@ -33,8 +34,8 @@ section_dict = {
 stats_header_dict = {
     'done': 'Успешно:',
     'warning': 'С предупреждениями:',
-    'error': 'С ошибками',
-    'output': 'В итоговом файле:'
+    'error': 'С ошибками:',
+    'output': 'Итого:'
 }
 type_proto_dict = {
     'tcp': 6,
@@ -62,6 +63,29 @@ day_dict = {
 }
 allowed_types = ['host', 'network', 'machines_range', 'group']
 
+icmp_available = {
+    3: [0, 1, 2, 3, 4, 5, 6,
+        7, 8, 9, 10, 11, 12,
+        13, 14, 15],
+    5: [0, 1, 2, 3],
+    6: [0],
+    9: [0, 16],
+    11: [0, 1],
+    12: [0, 1, 2],
+    40: [0, 1, 2, 3, 4, 5],
+    42: [0],
+    43: [0, 1, 2, 3, 4]
+}
+
+def icmp_validate(icmp_type, icmp_code):
+    if icmp_type is None or icmp_code is None:
+        return True
+
+    if icmp_type in icmp_available.keys():
+        if icmp_code in icmp_available[icmp_type]:
+            return True
+
+    return False
 
 def make_outpath(path_str):
     path = path_str
@@ -566,10 +590,10 @@ def process_Services(obj_dict, obj):
             if port == '': continue
             if port.startswith('>'):
                 min_port = int(port[1:]) + 1
-                port = f'{min_port}-{DEFAULT_MAX_PORT}'
+                port = f'{min_port}-{MAX_PORT}'
             elif port.startswith('<'):
                 max_port = int(port[1:]) - 1
-                port = f'{DEFAULT_MIN_PORT}-{max_port}'
+                port = f'{MIN_PORT}-{max_port}'
             obj[ports_dict[field_name]] = port
 
     if not 'type' in obj_dict.keys(): return None
@@ -584,6 +608,8 @@ def process_Services(obj_dict, obj):
     if protocol == 'icmp':
         obj['icmp_type'] = obj_dict.get('icmp_type', None)
         obj['icmp_code'] = obj_dict.get('icmp_code', None)
+        if not icmp_validate(obj['icmp_type'], obj['icmp_code']):
+            return None
 
     if protocol == 'other':
         if not 'protocol' in obj_dict.keys():
@@ -837,7 +863,8 @@ def main():
     parser.add_argument('--log', help='Имя файла отчёта', type=str)
     parser.add_argument('--policy_name', help='Имя политики для импорта', type=str)
     parser.add_argument('--name', help='Имя выходного файла', type=str)
-    args = parser.parse_args()
+    parser.add_argument('--num_rule', help='Ограничение по количеству правил в файле.', type=int, default=0)
+    args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
 
     if not args.input_rules or not args.input_objects:
         parser.print_help()
@@ -1025,8 +1052,70 @@ def main():
     path = make_outpath(args.output_path)
     print_report(path, data, [*section_dict], members_sections, chosen_rulebase)
     description_check(data, members_sections)
-    remove_fields(data,
-        [
+
+    # Разделение на правила FW и NAT
+    fw_rules = []
+    nat_rules = []
+    for rule in data:
+        if rule['__internal_type'] == 'FilterRules':
+            fw_rules.append(rule)
+        else:
+            nat_rules.append(rule)
+
+    del data
+
+    def obj_count(list_obj, members_sections, c):
+        for obj in list_obj:
+            if not type(obj) == dict:
+                continue
+
+            c += 1
+            for section in members_sections:
+                c = obj_count(
+                        obj.get(section, []),
+                        members_sections,
+                        c
+                    )
+
+        return c
+
+    # разбиение правил с отсечкой по 20к объектов и с ограничением по количеству правил
+    def split_rules(rules):
+        files_content = []
+        object_count = 0
+        rules_count = 0
+        part_of_rules = []
+        for rule in rules:
+            object_count += 1
+            if args.num_rule > 0:
+                rules_count += 1
+            for section in members_sections:
+                object_count = obj_count(
+                        rule.get(section, []),
+                        members_sections,
+                        object_count
+                    )
+
+            if object_count > MAX_OBJECTS_BORDER or rules_count > args.num_rule:
+                files_content.append(part_of_rules)
+                part_of_rules = [rule]
+                object_count -= MAX_OBJECTS_BORDER
+                rules_count -= args.num_rule
+            else:
+                part_of_rules.append(rule)
+
+        if len(part_of_rules) > 0:
+            files_content.append(part_of_rules)
+
+        return files_content
+
+    nat_files = split_rules(nat_rules)
+    del nat_rules
+
+    fw_files = split_rules(fw_rules)
+    del fw_rules
+
+    service_fields = [
             '__internal_type',
             'all_info_gates_use',
             'conversion_err',
@@ -1034,20 +1123,57 @@ def main():
             'original_name',
             'original_description',
             '__translation_port'
-        ], members_sections)
+        ]
 
-    if args.name:
-        filename = path / args.name
-    else:
-        filename = path / OUTPUT_FILENAME.format(pathlib.Path(args.input_rules).stem,
-                                                    chosen_rulebase['__internal_type_name'])
-    if filename.exists():
-        log.info("Выходной файл найден, перезапись")
+    def write_output_rules(files_content, file_prefix, file_postfix):
+        def collect_stats(objs, stats):
+            for obj in objs:
+                if not type(obj) == dict:
+                    continue
 
-    with open(filename, "w", encoding="utf8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+                obj_type = obj.get('__internal_type')
+                if not obj_type is None:
+                    stats[obj_type] += 1
 
-    log.info(f"Записано: {filename}")
+                for members_section in members_sections:
+                    if members_section in obj.keys():
+                        collect_stats(obj[members_section], stats)
+
+        if len(files_content) > 0:
+            i = 1
+            for file_content in files_content:
+                filename = path / OUTPUT_FILENAME.format(
+                    file_prefix,
+                    pathlib.Path(args.input_rules).stem,
+                    chosen_rulebase['__internal_type_name'],
+                    f"{file_postfix}{i if i > 1 else ''}")
+
+                stats = {}
+                for section in section_dict.keys():
+                    stats[section] = 0
+                collect_stats(file_content, stats)
+
+                log.info(f"Файл: {filename}")
+                log.info("\tВ промежуточном файле:")
+                for section in section_dict.keys():
+                    log.info(f"\t\t{section_dict[section]}: {stats[section]}")
+
+                if not log.level == logging.DEBUG:
+                    remove_fields(file_content, service_fields, members_sections)
+
+                write_outfile(file_content, filename)
+                i += 1
+
+    def write_outfile(data, filename):
+        if filename.exists():
+            log.info("Выходной файл найден, перезапись")
+        with open(filename, "w", encoding="utf8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+        log.info(f"Записан файл: {filename}")
+
+    prefix = args.name if args.name else 'import'
+    write_output_rules(fw_files, prefix, 'fw')
+    write_output_rules(nat_files, prefix, 'nat')
 
     print_stats()
 
