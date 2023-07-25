@@ -64,22 +64,9 @@ day_dict = {
     'Sun': 6
 }
 icmp_available = {
-    3: [0,
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7,
-        8,
-        9,
-        10,
-        11,
-        12,
-        13,
-        14,
-        15],
+    3: [0, 1, 2, 3, 4, 5, 6,
+        7, 8, 9, 10, 11, 12,
+        13, 14, 15],
     5: [0, 1, 2, 3],
     6: [0],
     9: [0, 16],
@@ -586,11 +573,7 @@ def main():
     parser.add_argument('--log', help='Имя файла логирования', type=str)
     parser.add_argument('--name', help='Имя выходного файла', type=str)
     parser.add_argument('--num_rule', help='Ограничение по количеству правил в файле.', type=int, default=0)
-    parser.add_argument('--debug', default=False, action="store_true")
     args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
-
-    if args.debug:
-        log.setLevel(logging.DEBUG)
 
     if len(args.input) != 2:
         parser.print_help()
@@ -935,7 +918,7 @@ def main():
                 for section in section_dict.keys():
                     log.info(f"\t\t{section_dict[section]}: {stats[section]}")
 
-                if not args.debug:
+                if not log.level == logging.DEBUG:
                     remove_fields(file_content, service_fields, members_sections)
 
                 write_outfile(file_content, filename)
