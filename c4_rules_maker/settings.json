@@ -1,0 +1,25 @@
+{
+    "fwrule": {
+        "fwrule_create": true,
+        "fwrule_logging": false,
+        "fwrule_block": true
+    },
+    "natrule": {
+        "original_create": true,
+        "masquerade_create": true,
+        "dynamic_create": true,
+        "dnat_create": true,
+        "static_create": true
+    },
+    "service": {
+        "tcp_service_include": true,
+        "udp_service_include": true,
+        "icmp_service_include": true,
+        "nat_service_type": "tcp"
+    },
+    "common_settings": {
+        "rules_start_index": 1,
+        "rules_end_index": 20,
+        "host_set_num": 2
+    }
+}
