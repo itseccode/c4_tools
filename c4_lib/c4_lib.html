@@ -74,6 +74,21 @@
 <dd>Описание резервной копии.</dd>
 </dl></div>
 </dd>
+<dt id="c4_lib.ApiConnector.delete_obj"><code class="name flex">
+<span>def <span class="ident">delete_obj</span></span>(<span>self, url, uuid)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Отправляет запрос на удаление объекта на указанный URL.</p>
+<h2 id="args">Args</h2>
+<dl>
+<dt><strong><code>url</code></strong></dt>
+<dd>URL для отправки.</dd>
+<dt><strong><code>uuid</code></strong></dt>
+<dd>идентификатор объекта для удаления.</dd>
+</dl>
+<h2 id="returns">Returns</h2>
+<p>Возвращает словарь.</p></div>
+</dd>
 <dt id="c4_lib.ApiConnector.download_backup"><code class="name flex">
 <span>def <span class="ident">download_backup</span></span>(<span>self, uuid, backup_path: pathlib.Path)</span>
 </code></dt>
@@ -300,6 +315,31 @@
 <h2 id="returns">Returns</h2>
 <p>Возвращает словарь.</p></div>
 </dd>
+<dt id="c4_lib.ApiConnector.put_to_endpoint"><code class="name flex">
+<span>def <span class="ident">put_to_endpoint</span></span>(<span>self, url, obj_dict, obj_files=None)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Отправляет словарь на указанный URL методом PUT.</p>
+<h2 id="args">Args</h2>
+<dl>
+<dt><strong><code>url</code></strong></dt>
+<dd>URL для отправки.</dd>
+<dt><strong><code>obj_dict</code></strong></dt>
+<dd>объект для отправки.</dd>
+<dt><strong><code>obj_files</code></strong></dt>
+<dd>необязательный параметр, позволяющий передавать файлы. {"имя файла": файлоподобный объект}</dd>
+</dl>
+<h2 id="returns">Returns</h2>
+<p>Возвращает словарь.</p></div>
+</dd>
+<dt id="c4_lib.ApiConnector.result_check"><code class="name flex">
+<span>def <span class="ident">result_check</span></span>(<span>self, result)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Проверяет ответ от сервера на наличие ошибок и выводит их, если есть.</p>
+<h2 id="returns">Returns</h2>
+<p>Возвращает True, если ошибок нет, иначе - False.</p></div>
+</dd>
 <dt id="c4_lib.ApiConnector.set_config_lock"><code class="name flex">
 <span>def <span class="ident">set_config_lock</span></span>(<span>self)</span>
 </code></dt>
@@ -327,6 +367,7 @@
 <li><code><a title="c4_lib.ApiConnector.commit_config" href="#c4_lib.ApiConnector.commit_config">commit_config</a></code></li>
 <li><code><a title="c4_lib.ApiConnector.config_lock_user" href="#c4_lib.ApiConnector.config_lock_user">config_lock_user</a></code></li>
 <li><code><a title="c4_lib.ApiConnector.create_backup" href="#c4_lib.ApiConnector.create_backup">create_backup</a></code></li>
+<li><code><a title="c4_lib.ApiConnector.delete_obj" href="#c4_lib.ApiConnector.delete_obj">delete_obj</a></code></li>
 <li><code><a title="c4_lib.ApiConnector.download_backup" href="#c4_lib.ApiConnector.download_backup">download_backup</a></code></li>
 <li><code><a title="c4_lib.ApiConnector.fork_config" href="#c4_lib.ApiConnector.fork_config">fork_config</a></code></li>
 <li><code><a title="c4_lib.ApiConnector.free_config_lock" href="#c4_lib.ApiConnector.free_config_lock">free_config_lock</a></code></li>
@@ -347,6 +388,8 @@
 <li><code><a title="c4_lib.ApiConnector.import_nat_rules" href="#c4_lib.ApiConnector.import_nat_rules">import_nat_rules</a></code></li>
 <li><code><a title="c4_lib.ApiConnector.install_policy_cgw" href="#c4_lib.ApiConnector.install_policy_cgw">install_policy_cgw</a></code></li>
 <li><code><a title="c4_lib.ApiConnector.post_to_endpoint" href="#c4_lib.ApiConnector.post_to_endpoint">post_to_endpoint</a></code></li>
+<li><code><a title="c4_lib.ApiConnector.put_to_endpoint" href="#c4_lib.ApiConnector.put_to_endpoint">put_to_endpoint</a></code></li>
+<li><code><a title="c4_lib.ApiConnector.result_check" href="#c4_lib.ApiConnector.result_check">result_check</a></code></li>
 <li><code><a title="c4_lib.ApiConnector.set_config_lock" href="#c4_lib.ApiConnector.set_config_lock">set_config_lock</a></code></li>
 </ul>
 </li>
