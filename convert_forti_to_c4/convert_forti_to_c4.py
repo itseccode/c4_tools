@@ -305,38 +305,6 @@ def read_forti(f):
     return data
 
 
-def in_and_full(container, key):
-    if container == None or container == [] or container == {}:
-        return False
-
-    if type(container) == dict:
-        if key not in container.keys():
-            return False
-
-        obj = container[key]
-        if obj == None or obj == [] or obj == {}:
-            return False
-
-    return True
-
-
-def flat_ip(obj):
-    ips = []
-    if type(obj) == list:
-        for member in obj:
-            ips.extend(flat_ip(member))
-
-    if type(obj) == dict:
-        if 'ip' in obj.keys():
-            ips.append(obj['ip'])
-
-        if 'members' in obj.keys():
-            for member in obj['members']:
-                ips.extend(flat_ip(member))
-
-    return ips
-
-
 def parse_rules(data, vip_names, objects, ippools):
     rules = []
     for key in data.keys():
@@ -401,6 +369,7 @@ def parse_rules(data, vip_names, objects, ippools):
                             continue
 
                         fw_rule[k4_field].append(obj)
+        rules.append(fw_rule)
 
         # NAT rules
         nat_enabled = rule_object.get('nat', '') == 'enable'
@@ -478,17 +447,20 @@ def parse_rules(data, vip_names, objects, ippools):
                     nat_rule['address_type'] = 'netobject'
 
                 # сервисы могут быть только TCP или UDP
+                TCP_UDP_service = True
                 for services in ['port_value', 'service']:
                     for service in nat_rule[services]:
                         if 'proto' in service.keys():
                             if not service['proto'] in [ type_proto_dict['tcp'],
                                                         type_proto_dict['udp'] ]:
                                 error_counter['NatRules']['error'] += 1
-                                continue
+                                TCP_UDP_service = False
+                                break
+
+                if not TCP_UDP_service:
+                    continue
 
                 rules.append(nat_rule)
-
-        rules.append(fw_rule)
     return rules
 
 
