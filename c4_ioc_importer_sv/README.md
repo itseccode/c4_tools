@@ -10,7 +10,7 @@
 
 # Назначение инструмента
 
-Импорт через API Континент 4 объектов IoC (Indicator of Compromise) от вендора [Security Vision](https://www.securityvision.ru/), включая IP адреса, URL, хэши файлов и доменов (FQDN), из контейнера `*.json` в следующем формате:
+Импорт через API Континент 4 объектов IoC (Indicator of Compromise) от вендора [Security Vision](https://www.securityvision.ru/), включая IP адреса, URL, хэши файлов и домены (FQDN), из контейнера `*.json` в следующем формате:
 
 ```
 {
