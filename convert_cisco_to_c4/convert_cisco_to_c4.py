@@ -137,6 +137,16 @@ def make_outpath(path_str):
     return path
 
 
+def get_first(obj):
+    if type(obj) is dict and not obj is {}:
+        return next(iter(obj.values()))
+
+    if type(obj) is list and len(obj) > 0:
+        return obj[0]
+
+    return None
+
+
 # Удаление служебных полей из итоговой структуры
 def remove_fields(objs, fields, members_sections):
     if not objs:
@@ -273,7 +283,7 @@ def read_cisco(f, i=0):
     line = f.readline()
     while line:
         clear_line = line.strip()
-        if clear_line.startswith(':') or clear_line.startswith('!') or line == '':
+        if clear_line.startswith(':') or clear_line.startswith('!') or line == '\n':
             line = f.readline()
             continue
 
@@ -406,11 +416,15 @@ def parse_objects(input_objects):
         for object_line in objects.keys():
             original_name = object_line[object_line.find(' ') + 1:]
             original_type = object_line[:object_line.find(' ')]
+
             k4_type = objects_type_dict.get(original_type)
             if k4_type is None:
                 continue
 
             original_obj = objects[object_line]
+            if original_obj == {}:
+                continue
+
             description = original_obj.get('description', '')
 
             obj = {
@@ -423,12 +437,14 @@ def parse_objects(input_objects):
 
             parse_fun = funcs_dictionary[k4_type]
             parsed_obj = parse_fun(original_obj, obj, hostnames)
-            if not parsed_obj is None:
-                add_to_list(parsed_objects, parsed_obj)
-                error_counter[k4_type]['done'] += 1
-            else:
+
+            if parsed_obj is None:
                 error_counter[k4_type]['warning'] += 1
                 log.warning(f"Объект некорректный: {original_obj}")
+                continue
+
+            error_counter[k4_type]['done'] += 1
+            add_to_list(parsed_objects, parsed_obj)
 
     objects = input_objects.get('object', {})
     parse(objects, parsed_objects, objects_dictionary, hostnames)
@@ -515,6 +531,7 @@ def process_NetObjects(original_obj, obj, hostnames):
                     'description': '',
                     'original_description': '',
                     '__internal_type': 'Services',
+                    'requires_keep_connections': False,
                     'type': 'service',
                     'proto': transport_protocols.get(proto),
                     'dst': real_port,
@@ -526,6 +543,7 @@ def process_NetObjects(original_obj, obj, hostnames):
                     'description': '',
                     'original_description': '',
                     '__internal_type': 'Services',
+                    'requires_keep_connections': False,
                     'type': 'service',
                     'proto': transport_protocols.get(proto),
                     'dst': mapped_port,
@@ -569,7 +587,8 @@ def process_NetObjectGroups(original_obj, obj, hostnames):
             members = [members]
 
         for m in members:
-            if m.startswith('host '):
+            netobj_list = m.split()
+            if netobj_list[0] in ['host', 'object']:
                 name = m[m.find(' ') + 1:]
                 if re.match(IP_REGEX, name):
                     obj['members'].append(
@@ -579,7 +598,6 @@ def process_NetObjectGroups(original_obj, obj, hostnames):
                 obj['members'].append(name)
                 continue
 
-            netobj_list = m.split()
             netmask = get_netmask(netobj_list[1])
             description = ''
             ip = ''
@@ -671,42 +689,83 @@ def process_ServiceGroups(original_obj, obj, hostnames):
 
     name = obj['name']
     proto = name[name.rfind(' ') + 1:]
-
-    if not proto in ['tcp', 'udp', 'tcp-udp']:
-        return None
-
-    if proto == 'tcp-udp':
-        proto = ['tcp', 'udp']
-    else:
-        proto = [proto]
-
     name = name[:name.rfind(' ')]
     obj['name'] = name
     obj['original_name'] = name
 
-    members = original_obj.get('port-object')
-    if not members is None:
-        if type(members) is str:
-            members = [members]
+    if 'service-object' in original_obj.keys():
+        services = original_obj['service-object']
+        if not services is None:
+            if type(services) is str:
+                ports = [services]
 
-        for m in members:
-            port_line = m.split()
-            port = get_cisco_port(port_line)
+            for m in services:
+                service_line = m.split()
 
-            for potocol in proto:
+                # "icmp",
+                if len(service_line) == 1:
+                    service = {
+                        'name': f"{name}_{service_line[0]}",
+                        'original_name': name,
+                        'description': '',
+                        'original_description': '',
+                        'requires_keep_connections': False,
+                        '__internal_type': 'Services',
+                        'type': 'service',
+                        'proto': ports_names.get(service_line[0])
+                    }
+                    obj['members'].append(service)
+                    continue
+
+                # "object https-8443",
+                if service_line[0] == 'object':
+                    obj['members'].append(service_line[1])
+                    continue
+
+                # "tcp destination eq www",
                 service = {
-                    'name': f"{name}_{potocol}_{port}",
+                    'name': name,
                     'original_name': name,
                     'description': '',
                     'original_description': '',
-                    'requires_keep_connections': False,
-                    '__internal_type': 'Services',
-                    'type': 'service',
-                    'proto': transport_protocols.get(potocol),
-                    'dst': port,
-                    'src': ''
+                    '__internal_type': 'Services'
                 }
+                process_Services({'service': m}, service, [])
                 obj['members'].append(service)
+
+    # ports group
+    if 'port-object' in original_obj.keys():
+        if not proto in ['tcp', 'udp', 'tcp-udp']:
+            return None
+
+        if proto == 'tcp-udp':
+            proto = ['tcp', 'udp']
+        else:
+            proto = [proto]
+
+        ports = original_obj['port-object']
+        if not ports is None:
+            if type(ports) is str:
+                ports = [ports]
+
+            for m in ports:
+                port_line = m.split()
+                port = get_cisco_port(port_line)
+
+                for protocol in proto:
+                    service = {
+                        'name': f"{name}_{protocol}_{port}",
+                        'original_name': name,
+                        'description': '',
+                        'original_description': '',
+                        'requires_keep_connections': False,
+                        '__internal_type': 'Services',
+                        'type': 'service',
+                        'proto': transport_protocols.get(protocol),
+                        'dst': port,
+                        'src': ''
+                    }
+                    obj['members'].append(service)
 
     return obj
 
@@ -740,7 +799,7 @@ def parse_rules(input_objects, proto_group):
 
 def parse_fw_rule(original_rule, proto_group):
     rule_list = original_rule.split()
-    if rule_list[1] == 'remark':
+    if rule_list[1] in ['remark', 'standard']:
         return []
     if not rule_list[1] == 'extended':
         return None
@@ -748,7 +807,7 @@ def parse_fw_rule(original_rule, proto_group):
     name = rule_list[0]
     action = rule_list[2]
     proto = ''
-    port = []
+    port = ''
     src = []
     dst = []
     service = []
@@ -801,8 +860,8 @@ def parse_fw_rule(original_rule, proto_group):
     for protocol in proto:
         if protocol in transport_protocols.keys():
             service.append({
-                'name': f"{name}_{protocol}_{port}" if not port == [] else f"{name}_{protocol}",
-                'original_name': f"{name}_{protocol}_{port}" if not port == [] else f"{name}_{protocol}",
+                'name': f"{name}_{protocol}_{port}" if not port == '' else f"{name}_{protocol}",
+                'original_name': f"{name}_{protocol}_{port}" if not port == '' else f"{name}_{protocol}",
                 'description': '',
                 'original_description': '',
                 'requires_keep_connections': False,
@@ -850,22 +909,21 @@ def parse_fw_rule(original_rule, proto_group):
 
 def parse_nat_rule(original_rule):
     def check_any(obj):
-        if obj == 'any':
+        if obj in ['any', 'interface']:
             return []
         return [obj]
 
     rule_list = original_rule.split()
-    name = ''
+    description = ''
     src = []
     dst = []
     service = []
     translated_src = []
     translated_dst = []
-    mirror_value = []
     translated_service = []
+
     srcStatic = True
     dstStatic = True
-    isNonNatRule = False
     unidirectional = 'unidirectional' in rule_list
 
     i = -1
@@ -896,44 +954,86 @@ def parse_nat_rule(original_rule):
                 translated_service = []
             continue
 
+        if word == 'description':
+            description = ' '.join(rule_list[i + 1:])
+            break
+
     if srcStatic and not dstStatic:
         log.warning("Правило имеет static src и dynamic dst")
         return None
 
     rules = []
-
     if translated_src == [] and translated_dst == []:
-        isNonNatRule = True
-        return create_nat_rule(name=name, nat_type='masquerade', src=src, dst=dst, service=service)
+        rules.append(
+            create_nat_rule(
+                name='',
+                description=description,
+                src=src,
+                dst=dst,
+                service=service,
+                nat_type='masquerade'
+            )
+        )
 
-    if not translated_src == []:
-        rules.append(create_nat_rule(name=name, nat_type='dynamic', src=src, dst=dst, service=service, value=translated_src, port_value=translated_service))
-        mirror_value = src
-    else:
-        rules.append(create_nat_rule(name=name, nat_type='dnat', src=src, dst=dst, service=service, value=translated_dst, port_value=translated_service))
-        mirror_value = dst
+    if translated_dst != []:
+        rules.append(
+            create_nat_rule(
+                name='',
+                description=description,
+                src=src,
+                dst=dst,
+                service=service,
+                value=translated_dst,
+                port_value=translated_service,
+                nat_type='dnat'
+            )
+        )
+
+    if translated_src != []:
+        rules.append(
+            create_nat_rule(
+                name='',
+                description=description,
+                src=src,
+                dst=dst,
+                service=service,
+                value=translated_src,
+                port_value=translated_service,
+                nat_type='dynamic'
+            )
+        )
 
     # mirror rule
     if srcStatic and not unidirectional:
-        if isNonNatRule:
-            rules.append(create_nat_rule(name = "mirror",
-                description = '',
-                nat_type = 'dnat',
-                src=dst,
-                dst=src,
-                service = service if translated_service == [] else translated_service,
-                port_value = [] if translated_service == [] else service))
-        else:
-            rules.append(create_nat_rule(name = "mirror",
-                description = '',
-                nat_type = 'dnat',
-                src = translated_dst if not translated_dst == [] else dst,
-                dst = translated_src if not translated_src == [] else src,
-                service = service if translated_service == [] else translated_service,
-                port_value = [] if translated_service == [] else service,
-                value = mirror_value))
+        if translated_src != [] and src != []:
+            rules.append(
+                create_nat_rule(
+                    name = "mirror",
+                    description = description,
+                    src = dst if translated_dst == [] else translated_dst,
+                    dst = src if translated_src == [] else translated_src,
+                    service = service if translated_service == [] else translated_service,
+                    port_value = [] if translated_service == [] else service,
+                    value = src,
+                    nat_type = 'dnat'
+                )
+            )
+        if translated_dst != [] and dst != []:
+            rules.append(
+                create_nat_rule(
+                    name = "mirror",
+                    description = description,
+                    src = dst if translated_dst == [] else translated_dst,
+                    dst = src if translated_src == [] else translated_src,
+                    service = service if translated_service == [] else translated_service,
+                    port_value = [] if translated_service == [] else service,
+                    value = dst,
+                    nat_type = 'dynamic'
+                )
+            )
 
     return rules
+
 
 def create_netobject(name = '', description = '', ip = ''):
     return {
@@ -948,8 +1048,8 @@ def create_netobject(name = '', description = '', ip = ''):
 
 
 def create_nat_rule(name, nat_type, src = [], dst = [], service = [], port_value = [], value = [], description = ''):
-    port_type = 'service' if not port_value == [] else []
-    address_type = 'netobject' if not value == [] else []
+    port_type = [] if port_value == [] else 'service'
+    address_type = [] if value == [] else 'netobject'
 
     names = [nat_type]
     for s_obj in src:
@@ -966,6 +1066,13 @@ def create_nat_rule(name, nat_type, src = [], dst = [], service = [], port_value
 
     if not name == '':
         names.append(name)
+
+    if nat_type == 'dynamic':
+        for v in port_value:
+            v['dst'] = ''
+    elif nat_type == 'dnat':
+        for v in port_value:
+            v['src'] = ''
 
     return {
         'name': '_'.join(names),
@@ -1024,6 +1131,11 @@ def main():
 
     log.info(f'Загрузка завершена')
 
+    # Сохранение промежуточного представления при отладке
+    if log.root.level <= logging.DEBUG:
+        with open('debug.json', 'w') as f:
+            json.dump(input_objects, f, indent=4, ensure_ascii=False)
+
     objects, proto_group = parse_objects(input_objects)
     rules = parse_rules(input_objects, proto_group)
 
@@ -1076,6 +1188,10 @@ def main():
                         if obj['name'] == object_id and type_match:
                             filled_section.append(copy.deepcopy(obj))
 
+                # поиск возможных пропущенных объектов при отладке
+                if log.root.level <= logging.DEBUG and len(rule[section]) != len(filled_section):
+                    log.debug(f"{rule['name']}: {section}")
+                    log.debug(f"\t{rule[section]}")
                 rule[section] = filled_section
 
     clean_rules = []
@@ -1093,8 +1209,11 @@ def main():
                 continue
 
         # Отсеивание правил с типом dnat, у которых translated destination - сеть или диапазон
-        if rule['nat_type'] == 'dnat' and ('/' in rule['value'][0]['ip'] or '-' in rule['value'][0]['ip']):
-            continue
+        value = rule.get('value', [])
+        if rule['nat_type'] == 'dnat' and len(value) > 0:
+            ip  = value[0].get('ip')
+            if '/' in ip or '-' in ip:
+                continue
 
         clean_rules.append(rule)
 
@@ -1103,9 +1222,6 @@ def main():
 
     # Сохранение промежуточного представления при отладке
     if log.root.level <= logging.DEBUG:
-        with open('debug.json', 'w') as f:
-            json.dump(input_objects, f, indent=4, ensure_ascii=False)
-
         with open('rules.json', 'w') as f:
             json.dump(rules, f, indent=4, ensure_ascii=False)
 
