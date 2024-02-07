@@ -15,7 +15,7 @@ if sys.version_info.major == 3 and sys.version_info.minor < 9:
     logging.basicConfig(level=logging.INFO,
     format='%(asctime)s %(levelname)-8s %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 else:
-    logging.basicConfig(encoding='utf-8', level=logging.INFO,
+    logging.basicConfig(encoding='utf-8', level=logging.DEBUG,
     format='%(asctime)s %(levelname)-8s %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 log = logging.getLogger(__name__)
 
@@ -132,6 +132,14 @@ def make_outpath(path_str):
         log.info("Папка не существует, создание")
         pathlib.Path(path).mkdir(parents=True, exist_ok=True)
     return path
+
+
+def group_has_blank_names(grp):
+    for obj in grp.get('members', []):
+        if type(obj) == str:
+            return True
+
+    return False
 
 
 # Удаление служебных полей из итоговой структуры
@@ -332,14 +340,15 @@ def parse_rules(data, vip_names, objects, ippools):
             'install_on': [],
             'passips': False,
             'rule_applications': [],
-            'is_inverse_src': False,
-            'is_inverse_dst': False,
+            'is_inverse_src': rule_object.get('srcaddr-negate') == 'enable',
+            'is_inverse_dst': rule_object.get('dstaddr-negate') == 'enable',
             'logging': True
         }
-        if rule_object.get('learning-mode', '') == 'enable':
+
+        if rule_object.get('learning-mode') == 'enable':
             fw_rule['rule_action'] = 'pass'
 
-        if rule_object.get('logtraffic', '') == 'disable':
+        if rule_object.get('logtraffic') == 'disable':
             fw_rule['logging'] = False
 
         fields_dict = {
@@ -362,7 +371,7 @@ def parse_rules(data, vip_names, objects, ippools):
 
                 for obj_name in original_value:
                     for obj in objects:
-                        if not obj['type'] in members_types[k4_field]:
+                        if not (obj.get('type') in members_types[k4_field] or obj.get('subtype') in members_types[k4_field]):
                             continue
 
                         if k4_field == 'service' and obj['original_name'] == obj_name:
@@ -378,96 +387,106 @@ def parse_rules(data, vip_names, objects, ippools):
         rules.append(fw_rule)
 
         # NAT rules
-        nat_enabled = rule_object.get('nat', '') == 'enable'
-        ip_pool = rule_object.get('ippool', '') == 'enable'
+        nat_enabled = rule_object.get('nat') == 'enable'
+        ip_pool = rule_object.get('ippool') == 'enable'
 
-        src_list = [None] if fw_rule['src'] == [] else fw_rule['src']
         dst_list = [None] if fw_rule['dst'] == [] else fw_rule['dst']
         for dst in dst_list:
             vip = not dst is None and dst['original_name'] in vip_names
             if not (nat_enabled or vip):
                 continue
 
-            for src in src_list:
-                nat_rule = {
-                    'name': name,
-                    'original_name': name,
-                    'description': description,
-                    'original_description': description,
-                    'is_enabled': False,
-                    '__internal_type': 'NatRules',
-                    'src': [],
-                    'dst': [],
-                    'service': fw_rule['service'],
-                    'install_on': [],
-                    'port_value': [],
-                    'port_type': [],
-                    'value': [],
-                    'address_type': [],
-                    'interface': None
+            nat_rule = {
+                'name': name,
+                'original_name': name,
+                'description': description,
+                'original_description': description,
+                'is_enabled': False,
+                '__internal_type': 'NatRules',
+                'src': fw_rule['src'],
+                'dst': [],
+                'service': [],
+                'install_on': [],
+                'port_value': [],
+                'port_type': [],
+                'value': [],
+                'address_type': [],
+                'interface': None
+            }
+
+            if not dst is None:
+                nat_rule['dst'] = [dst]
+
+            if vip:
+                nat_rule['nat_type'] = 'dnat'
+                vip_dict = {
+                    'dst': f"{dst['original_name']}{vip_postfixes['extip']}",
+                    'service': f"{dst['original_name']}{vip_postfixes['extport']}",
+                    'value': f"{dst['original_name']}{vip_postfixes['mappedip']}",
+                    'port_value': f"{dst['original_name']}{vip_postfixes['mappedport']}"
                 }
 
-                if not src is None:
-                    nat_rule['src'] = [src]
-
-                if not dst is None:
-                    nat_rule['dst'] = [dst]
-
-                if vip:
-                    nat_rule['nat_type'] = 'dnat'
-                    vip_dict = {
-                        'dst': f"{dst['original_name']}{vip_postfixes['extip']}",
-                        'service': f"{dst['original_name']}{vip_postfixes['extport']}",
-                        'value': f"{dst['original_name']}{vip_postfixes['mappedip']}",
-                        'port_value': f"{dst['original_name']}{vip_postfixes['mappedport']}"
-                    }
-
-                    for field in vip_dict.keys():
-                        for obj in objects:
-                            if obj['name'] == vip_dict[field]:
-                                nat_rule[field] = [obj]
-                                break
-
-                    if len(nat_rule['port_value']) > 0 and \
-                        type(nat_rule['port_value'][0]) is dict and \
-                        not nat_rule['port_value'][0].get('__port_forward'):
-                            nat_rule['service'] = fw_rule['service']
-                            nat_rule['port_value'] = []
-
-                elif ip_pool:
-                    nat_rule['nat_type'] = 'dynamic'
-                    for obj in ippools:
-                        if obj['original_name'] == rule_object['poolname']:
-                            nat_rule['value'] = [obj]
-                            nat_rule['address_type'] = 'netobject'
-                            if obj.get('__one-to-one'):
-                                nat_rule['nat_type'] = 'static'
+                for field in vip_dict.keys():
+                    for obj in objects:
+                        if obj['name'] == vip_dict[field]:
+                            nat_rule[field] = [obj]
                             break
-                else:
-                    nat_rule['nat_type'] = 'masquerade'
 
-                if not nat_rule['port_value'] == []:
-                    nat_rule['port_type'] = 'service'
+                if len(nat_rule['port_value']) > 0 and \
+                    type(nat_rule['port_value'][0]) is dict and \
+                    not nat_rule['port_value'][0].get('__port_forward'):
+                        nat_rule['service'] = []
+                        nat_rule['port_value'] = []
 
-                if not nat_rule['value'] == []:
-                    nat_rule['address_type'] = 'netobject'
+            elif ip_pool:
+                nat_rule['nat_type'] = 'dynamic'
+                for obj in ippools:
+                    if obj['original_name'] == rule_object['poolname']:
+                        nat_rule['value'] = [obj]
+                        nat_rule['address_type'] = 'netobject'
+                        if obj.get('__one-to-one'):
+                            nat_rule['nat_type'] = 'static'
+                        break
+            else:
+                nat_rule['nat_type'] = 'masquerade'
 
-                # сервисы могут быть только TCP или UDP
-                TCP_UDP_service = True
-                for services in ['port_value', 'service']:
-                    for service in nat_rule[services]:
-                        if 'proto' in service.keys():
-                            if not service['proto'] in [ type_proto_dict['tcp'],
-                                                        type_proto_dict['udp'] ]:
-                                error_counter[nat_rule['__internal_type']]['error'] += 1
-                                TCP_UDP_service = False
-                                break
+            if not nat_rule['port_value'] == []:
+                nat_rule['port_type'] = 'service'
 
-                if not TCP_UDP_service:
-                    continue
+            if not nat_rule['value'] == []:
+                nat_rule['address_type'] = 'netobject'
 
+            # сервисы могут быть только TCP или UDP
+            TCP_UDP_service = True
+            for services in ['port_value', 'service']:
+                for service in nat_rule[services]:
+                    if not service.get('proto') in [ type_proto_dict['tcp'], type_proto_dict['udp'] ]:
+                        error_counter[nat_rule['__internal_type']]['error'] += 1
+                        TCP_UDP_service = False
+                        break
+
+            if not TCP_UDP_service:
+                continue
+
+            if len(nat_rule['service']) == 1:
                 error_counter[nat_rule['__internal_type']]['done'] += 1
                 rules.append(nat_rule)
+            else:
+                for srvc in fw_rule['service']:
+                    TCP_UDP_service = srvc.get('proto') in [ type_proto_dict['tcp'], type_proto_dict['udp'] ]
+                    if not TCP_UDP_service:
+                        error_counter[nat_rule['__internal_type']]['warning'] += 1
+                        log.warning(f"Неподдерживаемый протокол сервиса ({srvc.get('name')}) в правиле NAT: {nat_rule.get('name')}")
+                        continue
+
+                    if srvc.get('type') == 'group':
+                        error_counter[nat_rule['__internal_type']]['warning'] += 1
+                        log.warning(f"Группа сервисов ({srvc.get('name')}) в правиле NAT: {nat_rule.get('name')}")
+                        continue
+
+                    error_counter[nat_rule['__internal_type']]['done'] += 1
+                    nat_rule['service'] = [srvc]
+                    rules.append(nat_rule)
     return rules
 
 
@@ -516,17 +535,56 @@ def parse_objects(input_objects):
 
     # Добавление объектов в группы
     for group in parsed_objects:
-        if group['type'] == 'group':
-            if not 'members' in group.keys():
+        if not group['type'] == 'group':
+            continue
+
+        if not 'members' in group.keys():
+            continue
+
+        filled_section = []
+        for object_name in group['members']:
+            found = False
+            for obj in parsed_objects:
+                name_match = obj['original_name'] == object_name
+                if name_match and (obj['type'] == group['subtype']):
+                    added_object = copy.deepcopy(obj)
+                    filled_section.append(added_object)
+                    found = True
+                    break
+
+            if not found:
+                filled_section.append(object_name)
+
+        group['members'] = filled_section
+
+    def fill_nested_group(group):
+        filled_section = []
+        for object_name in group['members']:
+            if type(object_name) == dict:
+                filled_section.append(object_name)
                 continue
 
-            filled_section = []
-            for object_name in group['members']:
-                for obj in parsed_objects:
-                    if obj['original_name'] == object_name and obj['type'] == group['subtype']:
-                        added_object = copy.deepcopy(obj)
-                        filled_section.append(added_object)
-            group['members'] = filled_section
+            for obj in parsed_objects:
+                name_match = obj['original_name'] == object_name
+                if name_match and obj['type'] == 'group' and obj['subtype'] == group['subtype']:
+
+                    if group_has_blank_names(obj):
+                        obj = fill_nested_group(obj)
+
+                    added_object = copy.deepcopy(obj)
+                    filled_section.append(added_object)
+        group['members'] = filled_section
+        return group
+
+    # Добавление групп в группы
+    for group in parsed_objects:
+        if not group['type'] == 'group':
+            continue
+
+        if not 'members' in group.keys():
+            continue
+
+        group = fill_nested_group(group)
 
     return parsed_objects, vip_obj
 
@@ -703,7 +761,7 @@ def process_vip(original_dict, obj):
         mappedport['requires_keep_connections'] = False
         mappedport['name'] = f"{mappedport['name']}{vip_postfixes['mappedport']}"
         mappedport['type'] = 'service'
-        mappedport['__port_forward'] = original_dict.get('portforward', '') == 'enable'
+        mappedport['__port_forward'] = original_dict.get('portforward') == 'enable'
         mappedport['proto'] = type_proto_dict.get(proto)
         if proto in ['tcp', 'udp', 'sctp']:
             ports = original_dict['mappedport']
