@@ -15,7 +15,7 @@ if sys.version_info.major == 3 and sys.version_info.minor < 9:
     logging.basicConfig(level=logging.INFO,
     format='%(asctime)s %(levelname)-8s %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 else:
-    logging.basicConfig(encoding='utf-8', level=logging.DEBUG,
+    logging.basicConfig(encoding='utf-8', level=logging.INFO,
     format='%(asctime)s %(levelname)-8s %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 log = logging.getLogger(__name__)
 
@@ -387,68 +387,55 @@ def parse_rules(data, vip_names, objects, ippools):
         rules.append(fw_rule)
 
         # NAT rules
-        nat_enabled = rule_object.get('nat') == 'enable'
-        ip_pool = rule_object.get('ippool') == 'enable'
+        TCP_UDP_list = [ type_proto_dict['tcp'], type_proto_dict['udp'] ]
+        rule = {
+            'name': name,
+            'original_name': name,
+            'description': description,
+            'original_description': description,
+            'is_enabled': False,
+            '__internal_type': 'NatRules',
+            'src': fw_rule['src'],
+            'dst': [],
+            'service': [],
+            'install_on': [],
+            'port_value': [],
+            'port_type': [],
+            'value': [],
+            'address_type': [],
+            'interface': None
+        }
 
-        dst_list = [None] if fw_rule['dst'] == [] else fw_rule['dst']
-        for dst in dst_list:
-            vip = not dst is None and dst['original_name'] in vip_names
-            if not (nat_enabled or vip):
-                continue
+        vip_dst_list = []
+        dst_list = []
+        for dst in fw_rule['dst']:
+            if dst['original_name'] in vip_names:
+                vip_dst_list.append(dst)
+            else:
+                dst_list.append(dst)
 
-            nat_rule = {
-                'name': name,
-                'original_name': name,
-                'description': description,
-                'original_description': description,
-                'is_enabled': False,
-                '__internal_type': 'NatRules',
-                'src': fw_rule['src'],
-                'dst': [],
-                'service': [],
-                'install_on': [],
-                'port_value': [],
-                'port_type': [],
-                'value': [],
-                'address_type': [],
-                'interface': None
+        # VIP
+        for dst in vip_dst_list:
+            nat_rule = copy.deepcopy(rule)
+            nat_rule['dst'] = [dst]
+            nat_rule['nat_type'] = 'dnat'
+            vip_dict = {
+                'dst': f"{dst['original_name']}{vip_postfixes['extip']}",
+                'service': f"{dst['original_name']}{vip_postfixes['extport']}",
+                'value': f"{dst['original_name']}{vip_postfixes['mappedip']}",
+                'port_value': f"{dst['original_name']}{vip_postfixes['mappedport']}"
             }
 
-            if not dst is None:
-                nat_rule['dst'] = [dst]
-
-            if vip:
-                nat_rule['nat_type'] = 'dnat'
-                vip_dict = {
-                    'dst': f"{dst['original_name']}{vip_postfixes['extip']}",
-                    'service': f"{dst['original_name']}{vip_postfixes['extport']}",
-                    'value': f"{dst['original_name']}{vip_postfixes['mappedip']}",
-                    'port_value': f"{dst['original_name']}{vip_postfixes['mappedport']}"
-                }
-
-                for field in vip_dict.keys():
-                    for obj in objects:
-                        if obj['name'] == vip_dict[field]:
-                            nat_rule[field] = [obj]
-                            break
-
-                if len(nat_rule['port_value']) > 0 and \
-                    type(nat_rule['port_value'][0]) is dict and \
-                    not nat_rule['port_value'][0].get('__port_forward'):
-                        nat_rule['service'] = []
-                        nat_rule['port_value'] = []
-
-            elif ip_pool:
-                nat_rule['nat_type'] = 'dynamic'
-                for obj in ippools:
-                    if obj['original_name'] == rule_object['poolname']:
-                        nat_rule['value'] = [obj]
-                        nat_rule['address_type'] = 'netobject'
-                        if obj.get('__one-to-one'):
-                            nat_rule['nat_type'] = 'static'
+            for field in vip_dict.keys():
+                for obj in objects:
+                    if obj['name'] == vip_dict[field]:
+                        nat_rule[field] = [obj]
                         break
-            else:
-                nat_rule['nat_type'] = 'masquerade'
+
+            port_value = nat_rule['port_value'][0] if len(nat_rule['port_value']) > 0 else {}
+            if not port_value.get('__port_forward'):
+                    nat_rule['service'] = []
+                    nat_rule['port_value'] = []
 
             if not nat_rule['port_value'] == []:
                 nat_rule['port_type'] = 'service'
@@ -457,36 +444,98 @@ def parse_rules(data, vip_names, objects, ippools):
                 nat_rule['address_type'] = 'netobject'
 
             # сервисы могут быть только TCP или UDP
-            TCP_UDP_service = True
-            for services in ['port_value', 'service']:
-                for service in nat_rule[services]:
-                    if not service.get('proto') in [ type_proto_dict['tcp'], type_proto_dict['udp'] ]:
-                        error_counter[nat_rule['__internal_type']]['error'] += 1
-                        TCP_UDP_service = False
-                        break
-
-            if not TCP_UDP_service:
+            if not port_value == {} and not port_value.get('proto') in TCP_UDP_list:
+                error_counter[rule['__internal_type']]['warning'] += 1
+                log.warning(f"Неподдерживаемый протокол сервиса ({port_value.get('name')}) в правиле NAT: {rule.get('name')}")
                 continue
 
-            if len(nat_rule['service']) == 1:
-                error_counter[nat_rule['__internal_type']]['done'] += 1
-                rules.append(nat_rule)
+            service = nat_rule['service'][0] if len(nat_rule['service']) > 0 else {}
+            if not service == {} and not service.get('proto') in TCP_UDP_list:
+                error_counter[rule['__internal_type']]['warning'] += 1
+                log.warning(f"Неподдерживаемый протокол сервиса ({service.get('name')}) в правиле NAT: {rule.get('name')}")
+                continue
+
+            rules.append(nat_rule)
+
+        nat_enabled = rule_object.get('nat') == 'enable'
+        if not nat_enabled:
+            continue
+
+        rules_without_services = []
+        pool_obj = {}
+        if rule_object.get('ippool') == 'enable':
+            for obj in ippools:
+                if obj['original_name'] == rule_object['poolname']:
+                    pool_obj = obj
+
+        if pool_obj.get('__one-to-one'):
+            if rule['src'] == []:
+                error_counter[rule['__internal_type']]['warning'] += 1
+                log.warning(f"Правило типа \"Отобразить\" с пустым источником: {rule.get('name')}")
+                continue
+
+            def add_static_nat(rule, src, dst):
+                nat_rule = copy.deepcopy(rule)
+                nat_rule['nat_type'] = 'static'
+                nat_rule['value'] = [pool_obj]
+                nat_rule['address_type'] = 'netobject'
+                nat_rule['src'] = src
+                nat_rule['dst'] = dst
+                return nat_rule
+
+            for src in rule['src']:
+                if src.get('type') == 'group':
+                    error_counter[rule['__internal_type']]['warning'] += 1
+                    log.warning(f"Группы не поддерживаются для правил типа \"Отобразить\": {rule.get('name')}")
+                    continue
+
+                if '-' in src.get('ip'):
+                    error_counter[rule['__internal_type']]['warning'] += 1
+                    log.warning(f"Диапазоны не поддерживаются для правил типа \"Отобразить\": {rule.get('name')}")
+                    continue
+
+                if len(dst_list) == 0:
+                    error_counter[rule['__internal_type']]['done'] += 1
+                    rules_without_services.append(add_static_nat(rule, [src], []))
+
+                for dst in dst_list:
+                    error_counter[rule['__internal_type']]['done'] += 1
+                    rules_without_services.append(add_static_nat(rule, [src], [dst]))
+        else:
+            nat_rule = copy.deepcopy(rule)
+            nat_rule['dst'] = dst_list
+
+            if not pool_obj == {}:
+                nat_rule['nat_type'] = 'dynamic'
+                nat_rule['value'] = [pool_obj]
+                nat_rule['address_type'] = 'netobject'
             else:
+                nat_rule['nat_type'] = 'masquerade'
+
+            rules_without_services.append(nat_rule)
+
+        # Сервисы
+        if len(fw_rule['service']) == 0:
+            error_counter[rule['__internal_type']]['done'] += 1
+            rules.extend(rules_without_services)
+        else:
+            for nat_rule in rules_without_services:
                 for srvc in fw_rule['service']:
-                    TCP_UDP_service = srvc.get('proto') in [ type_proto_dict['tcp'], type_proto_dict['udp'] ]
-                    if not TCP_UDP_service:
-                        error_counter[nat_rule['__internal_type']]['warning'] += 1
-                        log.warning(f"Неподдерживаемый протокол сервиса ({srvc.get('name')}) в правиле NAT: {nat_rule.get('name')}")
+                    service_list_rule = copy.deepcopy(nat_rule)
+                    # сервисы могут быть только TCP или UDP
+                    if not srvc.get('proto') in TCP_UDP_list:
+                        error_counter[rule['__internal_type']]['warning'] += 1
+                        log.warning(f"Неподдерживаемый протокол сервиса ({srvc.get('name')}) в правиле NAT: {rule.get('name')}")
                         continue
 
                     if srvc.get('type') == 'group':
-                        error_counter[nat_rule['__internal_type']]['warning'] += 1
-                        log.warning(f"Группа сервисов ({srvc.get('name')}) в правиле NAT: {nat_rule.get('name')}")
+                        error_counter[rule['__internal_type']]['warning'] += 1
+                        log.warning(f"Группа сервисов ({srvc.get('name')}) в правиле NAT не поддерживается: {rule.get('name')}")
                         continue
 
-                    error_counter[nat_rule['__internal_type']]['done'] += 1
-                    nat_rule['service'] = [srvc]
-                    rules.append(nat_rule)
+                    error_counter[rule['__internal_type']]['done'] += 1
+                    service_list_rule['service'] = [srvc]
+                    rules.append(service_list_rule)
     return rules
 
 
@@ -971,6 +1020,7 @@ def main():
     prefix = args.name if args.name else 'import'
     write_output_rules([rules], prefix)
     print_stats()
+
 
 if __name__ == '__main__':
     main()
