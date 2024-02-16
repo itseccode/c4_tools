@@ -266,40 +266,43 @@ def read_forti(f):
     long_key = None
     for line in f:
         clear_line = line.strip()
-        if clear_line.startswith('#'):
+        if clear_line.startswith('#') or len(clear_line) == 0:
             continue
 
         if line.count('"') % 2 > 0:
             long_string = not long_string
+            # Конец строки
             if not long_string:
-                data[long_key] = clear_line
+                data[long_key] += clear_line
                 long_key = None
                 continue
 
+        # середина строки
         if long_string and not long_key is None:
-            data[long_key] = clear_line
+            data[long_key] += clear_line
             continue
 
+        first_word = clear_line[clear_line.find(' ') + 1:]
         if clear_line.startswith('config') or clear_line.startswith('edit'):
-            header = clear_line[clear_line.find(' ') + 1:]
-            header = header.replace('"', '')
+            header = first_word.replace('"', '')
             data[header] = read_forti(f)
             continue
 
         if clear_line.startswith('next') or clear_line.startswith('end'):
             return data
 
+        cmd_space = first_word.find(' ')
+        variable = first_word[:cmd_space]
+        value = first_word[cmd_space + 1:]
         if clear_line.startswith('set'):
-            command = clear_line[clear_line.find(' ') + 1:]
-            cmd_space = command.find(' ')
-            variable = command[:cmd_space]
-            value = command[cmd_space + 1:]
+            # начало строки
             if long_string:
                 long_key = variable
 
             if value[0] == '"':
                 value = value[1:]
-            if value[-1] == '"':
+
+            if len(value) > 0 and value[-1] == '"':
                 value = value[:-1]
 
             if value.find('" "') > 0:
@@ -310,7 +313,7 @@ def read_forti(f):
             continue
 
         if clear_line.startswith('unset'):
-            data[clear_line] = ''
+            data[variable] = ''
             continue
 
         log.debug(f"Не распознано! - {line}")
@@ -715,7 +718,12 @@ def process_Services(original_dict, obj):
         out_objects.append(udp_service)
 
     if original_dict.get('protocol') == 'IP':
-        obj['proto'] = int(original_dict.get('protocol-number'))
+        proto_str = original_dict.get('protocol-number')
+        if proto_str == None:
+            log.warning('У сервиса не задан протокол')
+            return None
+
+        obj['proto'] = int(proto_str)
         if obj['proto'] in [0, 41, 43, 44, 45, 46, 50, 51, 58, 59, 60]:
             log.warning('В параметрах сервиса используется неподдерживаемый протокол')
             return None
@@ -936,27 +944,56 @@ def main():
 
     log.info(f'Загрузка завершена')
 
-    if 'vdom' in input_objects.keys() and 'root' in input_objects.get('vdom', {}).keys():
-        input_objects = input_objects['vdom']['root']
+    # if 'vdom' in input_objects.keys() and 'root' in input_objects.get('vdom', {}).keys():
+    #     input_objects = input_objects['vdom']['root']
 
-    firewall_policy = input_objects.get('firewall policy', {})
-    objects, vip_names = parse_objects(input_objects)
-    ippools = parse_ippool(input_objects)
-    rules = parse_rules(firewall_policy, vip_names, objects, ippools)
+    def parse_policy(input_objects):
+        firewall_policy = input_objects.get('firewall policy', {})
+        objects, vip_names = parse_objects(input_objects)
+        ippools = parse_ippool(input_objects)
+        rules = parse_rules(firewall_policy, vip_names, objects, ippools)
+        return objects, vip_names, rules
+
+    def vdom_iterate(input_objects):
+        out_objects = []
+        out_vip_names = []
+        out_rules = []
+        for key in input_objects.keys():
+            if not key == 'vdom':
+                objects, vip_names, rules = parse_policy(input_objects[key])
+                out_objects.extend(objects)
+                out_vip_names.extend(vip_names)
+                out_rules.extend(rules)
+
+        if 'vdom' in input_objects.keys():
+            objects, vip_names, rules = vdom_iterate(input_objects.get('vdom', {}))
+            out_objects.extend(objects)
+            out_vip_names.extend(vip_names)
+            out_rules.extend(rules)
+
+        return out_objects, out_vip_names, out_rules
+
+    objects = []
+    vip_names = []
+    rules = []
+    if 'vdom' in input_objects.keys():
+        objects, vip_names, rules = vdom_iterate(input_objects['vdom'])
+    else:
+        objects, vip_names, rules = parse_policy(input_objects)
 
     log.debug(f"VIP - {vip_names}")
 
+    path = make_outpath(args.output_path)
     # Сохранение промежуточного представления для отладки
     if log.root.level <= logging.DEBUG:
-        with open('debug.json', 'w') as f:
+        with open(path / 'debug.json', 'w') as f:
             json.dump(input_objects, f, indent=4, ensure_ascii=False)
 
-        with open('objects.json', 'w') as f:
+        with open(path / 'objects.json', 'w') as f:
             json.dump(objects, f, indent=4, ensure_ascii=False)
 
     members_sections = [*members_types]
     members_sections.extend(['members', 'value', 'port_value'])
-    path = make_outpath(args.output_path)
 
     print_report(path, rules, [*section_dict], members_sections)
     description_check(rules, members_sections)
