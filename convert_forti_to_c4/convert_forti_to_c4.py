@@ -667,7 +667,13 @@ def process_NetObjects(original_dict, obj):
 def process_NetObjectGroups(original_dict, obj):
     obj['type'] = 'group'
     obj['subtype'] = 'netobject'
-    obj['members'] = original_dict.get('member', [])
+    obj['members'] = []
+    member = original_dict.get('member', [])
+    if type(member) == str:
+        obj['members'].append(member)
+    else:
+        obj['members'].extend(member)
+
     return obj
 
 
@@ -745,7 +751,13 @@ def process_Services(original_dict, obj):
 def process_ServiceGroups(original_dict, obj):
     obj['type'] = 'group'
     obj['subtype'] = 'service'
-    obj['members'] = original_dict.get('member', [])
+    obj['members'] = []
+    member = original_dict.get('member', [])
+    if type(member) == str:
+        obj['members'].append(member)
+    else:
+        obj['members'].extend(member)
+
     return obj
 
 
@@ -943,9 +955,6 @@ def main():
         input_objects = read_forti(f)
 
     log.info(f'Загрузка завершена')
-
-    # if 'vdom' in input_objects.keys() and 'root' in input_objects.get('vdom', {}).keys():
-    #     input_objects = input_objects['vdom']['root']
 
     def parse_policy(input_objects):
         firewall_policy = input_objects.get('firewall policy', {})
