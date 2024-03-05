@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import json
-from os.path import basename, commonpath
+from os.path import basename
 import sys
 import argparse
 import logging
@@ -10,10 +10,13 @@ import re
 
 OUTPUT_FILENAME = "{}-{}{}.json"
 MAX_DESCR_LEN = 1024
-MAX_OBJECTS_BORDER = 20000
 IP_REGEX = r"^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$"
 
-logging.basicConfig(encoding='utf-8', level=logging.INFO,
+if sys.version_info.major == 3 and sys.version_info.minor < 9:
+    logging.basicConfig(level=logging.INFO,
+    format='%(asctime)s %(levelname)-8s %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+else:
+    logging.basicConfig(encoding='utf-8', level=logging.INFO,
     format='%(asctime)s %(levelname)-8s %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 log = logging.getLogger(__name__)
 
@@ -27,48 +30,18 @@ section_dict = {
     'FilterRules': 'Правила фильтрации',
     'NatRules': 'Правила трансляции'
 }
-members_types = {
-    'src': ['netobject'],
-    'dst': ['netobject'],
-    'service': ['service'],
-    'src_translated': ['netobject'],
-    'dst_translated': ['netobject'],
-    'port_value': ['service'],
-    'params': ['timeinterval']
-}
 stats_header_dict = {
-    'done': 'Успешно:',
-    'warning': 'С предупреждениями:',
-    'error': 'С ошибками:',
-    'output': 'Итого:'
+    'done': 'Извлечено успешно:',
+    'warning': 'Извлечено с предупреждениями:',
+    'error': 'Извлечено с ошибками:',
+    'output': 'Записано итого:'
 }
 objects_type_dict = {
-    'network': 'NetObjects',
-    'service': 'Services',
-}
-day_dict = {
-    'sunday': 0,
-    'monday': 1,
-    'tuesday': 2,
-    'wednesday': 3,
-    'thursday': 4,
-    'friday': 5,
-    'saturday': 6
-}
-type_proto_dict = {
-    'tcp': 6,
-    'udp': 17,
-    'icmp': 1,
-    'icmpv6': 58,
-    'tcp_citrix': 6,
-    'sctp': 132,
-    'gtp_v0': 17,
-    'gtp_mm_v0': 17,
-    'gtp_v1': 17,
-    'gtp_mm_v1': 17,
-    'gtp_v2': 17,
-    'gtp_mm_v2': 17,
-    'tcp_subservice': 6
+    'object network': 'NetObjects',
+    'object service': 'Services',
+    'object-group network': 'NetObjectGroups',
+    'object-group service': 'ServiceGroups',
+    'object-group protocol': ''
 }
 transport_protocols = {
     'tcp': 6,
@@ -108,7 +81,7 @@ icmp_available = {
 
 
 def icmp_validate(icmp_type, icmp_code):
-    if icmp_type is None or icmp_code is None:
+    if icmp_type == None or icmp_code == None:
         return True
 
     if icmp_type in icmp_available.keys():
@@ -138,10 +111,10 @@ def make_outpath(path_str):
 
 
 def get_first(obj):
-    if type(obj) is dict and not obj is {}:
+    if type(obj) == dict and not obj == {}:
         return next(iter(obj.values()))
 
-    if type(obj) is list and len(obj) > 0:
+    if type(obj) == list and len(obj) > 0:
         return obj[0]
 
     return None
@@ -268,10 +241,10 @@ def read_cisco(f, i=0):
     def append_to_root(root, key, obj):
         if key in root.keys():
             # str to list
-            if type(root[key]) is str:
+            if type(root[key]) == str:
                 root[key] = [root[key]]
 
-            if type(root[key]) is dict:
+            if type(root[key]) == dict:
                 root[key][obj] = {}
             else:
                 root[key].append(obj)
@@ -282,8 +255,12 @@ def read_cisco(f, i=0):
     data = {}
     line = f.readline()
     while line:
+        if line == '\n':
+            line = f.readline()
+            continue
+
         clear_line = line.strip()
-        if clear_line.startswith(':') or clear_line.startswith('!') or line == '\n':
+        if clear_line.startswith(':') or clear_line.startswith('!') or clear_line == '':
             line = f.readline()
             continue
 
@@ -293,10 +270,12 @@ def read_cisco(f, i=0):
 
         position = f.tell()
         next_line = f.readline()
+        while next_line and next_line.strip() == '': next_line = f.readline()
         f.seek(position)
 
         white_index = 0
-        while next_line[white_index] == ' ': white_index += 1
+        if len(next_line) > 0:
+            while next_line[white_index] == ' ': white_index += 1
 
         # Есть вложенные свойства
         if white_index > i:
@@ -305,11 +284,11 @@ def read_cisco(f, i=0):
                 data[first_word] = {}
 
             # str to dict
-            if type(data[first_word]) is str:
+            if type(data[first_word]) == str:
                 data[first_word] = {data[first_word]: {}}
 
             # str list to dict
-            if type(data[first_word]) is list:
+            if type(data[first_word]) == list:
                 new_dict = {}
                 for it in data[first_word]:
                     new_dict[it] = {}
@@ -397,8 +376,8 @@ def parse_objects(input_objects):
         'Services': process_Services
     }
     groups_dictionary = {
-        'NetObjects': process_NetObjectGroups,
-        'Services': process_ServiceGroups,
+        'NetObjectGroups': process_NetObjectGroups,
+        'ServiceGroups': process_ServiceGroups,
     }
 
     hostnames = []
@@ -412,21 +391,27 @@ def parse_objects(input_objects):
             obj['description'] = ' '.join(host[2:])
         hostnames.append(obj)
 
-    def parse(objects, parsed_objects, funcs_dictionary, hostnames):
+    def parse(section, objects, parsed_objects, funcs_dictionary, hostnames):
         for object_line in objects.keys():
             original_name = object_line[object_line.find(' ') + 1:]
             original_type = object_line[:object_line.find(' ')]
 
-            k4_type = objects_type_dict.get(original_type)
-            if k4_type is None:
+            k4_type = objects_type_dict.get(f"{section} {original_type}")
+            if k4_type == None:
+                log.error(f"Тип не определён: {object_line}")
+                continue
+
+            # protocol - пропуск, обрабатывается дальше
+            if k4_type == '':
                 continue
 
             original_obj = objects[object_line]
             if original_obj == {}:
+                error_counter[k4_type]['warning'] += 1
+                log.warning(f"Объект пустой: {object_line}")
                 continue
 
             description = original_obj.get('description', '')
-
             obj = {
                 'name': original_name,
                 'original_name': original_name,
@@ -438,7 +423,7 @@ def parse_objects(input_objects):
             parse_fun = funcs_dictionary[k4_type]
             parsed_obj = parse_fun(original_obj, obj, hostnames)
 
-            if parsed_obj is None:
+            if parsed_obj == None:
                 error_counter[k4_type]['warning'] += 1
                 log.warning(f"Объект некорректный: {original_obj}")
                 continue
@@ -447,10 +432,10 @@ def parse_objects(input_objects):
             add_to_list(parsed_objects, parsed_obj)
 
     objects = input_objects.get('object', {})
-    parse(objects, parsed_objects, objects_dictionary, hostnames)
+    parse('object', objects, parsed_objects, objects_dictionary, hostnames)
 
     objects = input_objects.get('object-group', {})
-    parse(objects, parsed_objects, groups_dictionary, hostnames)
+    parse('object-group', objects, parsed_objects, groups_dictionary, hostnames)
 
     # for proto_group
     objects = input_objects.get('object-group', {})
@@ -467,7 +452,7 @@ def parse_objects(input_objects):
     for hostname in hostnames:
         found = False
         for obj in parsed_objects:
-            if not obj.get('type') == 'netobject':
+            if not 'netobject' in [obj.get('type'), obj.get('subtype')]:
                 continue
 
             if obj['name'] == hostname['name']:
@@ -475,6 +460,7 @@ def parse_objects(input_objects):
                 break
 
         if not found:
+            error_counter['NetObjects']['done'] += 1
             parsed_objects.append(
                 create_netobject(name = hostname['name'], ip = hostname['ip'])
             )
@@ -513,7 +499,7 @@ def process_NetObjects(original_obj, obj, hostnames):
             value = [nat_line[2]]
 
         # service
-        if len(nat_line) > 3:
+        if len(nat_line) > 3 and nat_line[3] == 'service':
             proto = nat_line[4]
 
             real_port = nat_line[5]
@@ -534,8 +520,8 @@ def process_NetObjects(original_obj, obj, hostnames):
                     'requires_keep_connections': False,
                     'type': 'service',
                     'proto': transport_protocols.get(proto),
-                    'dst': real_port,
-                    'src': ''
+                    'dst': '',
+                    'src': real_port
                 }]
                 port_value = [{
                     'name': f"{obj['name']}_{proto}_{mapped_port}",
@@ -546,8 +532,8 @@ def process_NetObjects(original_obj, obj, hostnames):
                     'requires_keep_connections': False,
                     'type': 'service',
                     'proto': transport_protocols.get(proto),
-                    'dst': mapped_port,
-                    'src': ''
+                    'dst': '',
+                    'src': mapped_port
                 }]
 
         rule = create_nat_rule(name=f"{obj['name']}_NAT", nat_type=nat_type, src=[obj], service=service, port_value=port_value, value=value)
@@ -575,15 +561,15 @@ def process_NetObjectGroups(original_obj, obj, hostnames):
 
     obj['members'] = []
     groups = original_obj.get('group-object')
-    if not groups is None:
-        if type(groups) is str:
+    if not groups == None:
+        if type(groups) == str:
             obj['members'].append(groups)
-        if type(groups) is list:
+        if type(groups) == list:
             obj['members'].extend(groups)
 
     members = original_obj.get('network-object')
-    if not members is None:
-        if type(members) is str:
+    if not members == None:
+        if type(members) == str:
             members = [members]
 
         for m in members:
@@ -625,7 +611,7 @@ def process_Services(original_obj, obj, hostnames):
     obj['requires_keep_connections'] = False
 
     service_line = original_obj.get('service')
-    if service_line is None:
+    if service_line == None:
         return None
 
     service_line = service_line.split()
@@ -636,7 +622,7 @@ def process_Services(original_obj, obj, hostnames):
         obj['src'] = ''
         i = 1
         for word in service_line[1:]:
-            # word is direction
+            # word - direction
             if word in ['source', 'destination']:
                 port = get_cisco_port(service_line[i + 1:])
 
@@ -678,25 +664,29 @@ def process_Services(original_obj, obj, hostnames):
 def process_ServiceGroups(original_obj, obj, hostnames):
     obj['type'] = 'group'
     obj['subtype'] = 'service'
-
     obj['members'] = []
+
     groups = original_obj.get('group-object')
-    if not groups is None:
-        if type(groups) is str:
+    if not groups == None:
+        if type(groups) == str:
             obj['members'].append(groups)
-        if type(groups) is list:
+        if type(groups) == list:
             obj['members'].extend(groups)
 
     name = obj['name']
-    proto = name[name.rfind(' ') + 1:]
-    name = name[:name.rfind(' ')]
-    obj['name'] = name
-    obj['original_name'] = name
+
+    # у группы портов протокол указан сразу после имени
+    space_idx = name.rfind(' ')
+    proto = name[space_idx + 1:]
+    if space_idx >= 0:
+        name = name[:space_idx]
+        obj['name'] = name
+        obj['original_name'] = name
 
     if 'service-object' in original_obj.keys():
         services = original_obj['service-object']
-        if not services is None:
-            if type(services) is str:
+        if not services == None:
+            if type(services) == str:
                 ports = [services]
 
             for m in services:
@@ -743,9 +733,9 @@ def process_ServiceGroups(original_obj, obj, hostnames):
         else:
             proto = [proto]
 
-        ports = original_obj['port-object']
-        if not ports is None:
-            if type(ports) is str:
+        ports = original_obj.get('port-object')
+        if not ports == None:
+            if type(ports) == str:
                 ports = [ports]
 
             for m in ports:
@@ -775,7 +765,7 @@ def parse_rules(input_objects, proto_group):
     original_fw_rules = input_objects.get('access-list', {})
     for original_rule in original_fw_rules:
         parsed_rule = parse_fw_rule(original_rule, proto_group)
-        if not parsed_rule is None:
+        if not parsed_rule == None:
             add_to_list(parsed_rules, parsed_rule)
             error_counter['FilterRules']['done'] += 1
         else:
@@ -787,7 +777,7 @@ def parse_rules(input_objects, proto_group):
     original_nat_rules = input_objects.get('nat', {})
     for original_rule in original_nat_rules:
         parsed_rule = parse_nat_rule(original_rule)
-        if not parsed_rule is None:
+        if not parsed_rule == None:
             add_to_list(parsed_rules, parsed_rule)
             error_counter['NatRules']['done'] += 1
         else:
@@ -798,79 +788,128 @@ def parse_rules(input_objects, proto_group):
 
 
 def parse_fw_rule(original_rule, proto_group):
+    any_list = ['any', 'any4', 'any6']
     rule_list = original_rule.split()
-    if rule_list[1] in ['remark', 'standard']:
+    name = rule_list[0]
+    rule_type = rule_list[1]
+    if rule_type == 'remark':
         return []
-    if not rule_list[1] == 'extended':
+
+    if not rule_type in ['extended', 'standard']:
+        log.error(f"Неподдерживаемое правило МЭ: {original_rule}")
         return None
 
-    name = rule_list[0]
     action = rule_list[2]
     proto = ''
-    port = ''
+    dst_port = ''
+    src_port = ''
     src = []
     dst = []
     service = []
 
-    second_netw_obj = False
-    i = 0
+    # rule_list - имя (0), тип (1), действие (2)
+    i = 3
+    objects_counter = 0
     while i < len(rule_list):
         word = rule_list[i]
 
-        # service proto
-        if i == 3:
-            if word == 'object-group':
+        # сетевой объект в виде any
+        if word in any_list:
+            objects_counter += 1
+            i += 1
+            continue
+
+        if proto == '':
+            # для standard
+            if word == 'host' or re.match(IP_REGEX, word):
+                proto = []
+                continue
+
+            # format: группа протоколов (3), ...
+            if word in ['object-group', 'object']:
                 proto = proto_group.get(rule_list[i + 1], [])
+                # format: сервис (3), сетевой объект (4), сетевой объект (5)
+                if proto == []:
+                    service.append(rule_list[i + 1])
+
                 i += 2
                 continue
+
+            # протокол, прописанный в самом правиле
             proto = word
+            i += 1
+            continue
 
         if word in ['host', 'object', 'object-group'] or re.match(IP_REGEX, word):
-            netobj = []
+            object = []
 
             if re.match(IP_REGEX, word):
                 netmask = get_netmask(rule_list[i + 1])
-                netobj = create_netobject(name=f"{word}_{netmask}", ip=f"{word}/{netmask}")
+                object = [create_netobject(name=f"{word}_{netmask}", ip=f"{word}/{netmask}")]
 
             if word in ['object', 'object-group']:
-                netobj = rule_list[i + 1]
+                object = [rule_list[i + 1]]
 
             if word == 'host':
-                netobj = create_netobject(name=rule_list[i + 1], ip=rule_list[i + 1])
+                object = [create_netobject(name=rule_list[i + 1], ip=rule_list[i + 1])]
 
-            if second_netw_obj:
-                dst = [netobj]
-            else:
-                src = [netobj]
-                second_netw_obj = True
+            if objects_counter == 0:
+                src = object
 
+            if objects_counter == 1:
+                dst = object
+
+            # сервис после двух сетевых объектов
+            if objects_counter == 2:
+                service.extend(object)
+
+            objects_counter += 1
             i += 1
-
-        if word == 'any' and not second_netw_obj:
-            second_netw_obj = True
 
         # service port
         if word in ['gt', 'lt', 'range', 'eq', 'all']:
-            port = get_cisco_port(rule_list[i:])
+            if objects_counter == 1:
+                src_port = get_cisco_port(rule_list[i:])
+            if objects_counter == 2:
+                dst_port = get_cisco_port(rule_list[i:])
 
         i += 1
 
     if type(proto) == str: proto = [proto]
 
     for protocol in proto:
+        # если протокол не указан в самом правиле
+        # cервисы уже должны быть заполнены
+        if protocol == '':
+            continue
+
         if protocol in transport_protocols.keys():
-            service.append({
-                'name': f"{name}_{protocol}_{port}" if not port == '' else f"{name}_{protocol}",
-                'original_name': f"{name}_{protocol}_{port}" if not port == '' else f"{name}_{protocol}",
-                'description': '',
-                'original_description': '',
-                'requires_keep_connections': False,
-                '__internal_type': 'Services',
-                'type': 'service',
-                'proto': transport_protocols[protocol],
-                'dst': port,
-                'src': ''
-            })
+            if not src_port == '':
+                service.append({
+                    'name': f"{name}_{protocol}_{src_port}",
+                    'original_name': f"{name}_{protocol}_{src_port}",
+                    'description': '',
+                    'original_description': '',
+                    'requires_keep_connections': False,
+                    '__internal_type': 'Services',
+                    'type': 'service',
+                    'proto': transport_protocols[protocol],
+                    'dst': '',
+                    'src': src_port
+                })
+            if not dst_port == '':
+                service.append({
+                    'name': f"{name}_{protocol}_{dst_port}",
+                    'original_name': f"{name}_{protocol}_{dst_port}",
+                    'description': '',
+                    'original_description': '',
+                    'requires_keep_connections': False,
+                    '__internal_type': 'Services',
+                    'type': 'service',
+                    'proto': transport_protocols[protocol],
+                    'dst': dst_port,
+                    'src': ''
+                })
         elif protocol == 'icmp':
             service.append({
                 'name': f"{name}_{protocol}",
@@ -1067,13 +1106,6 @@ def create_nat_rule(name, nat_type, src = [], dst = [], service = [], port_value
     if not name == '':
         names.append(name)
 
-    if nat_type == 'dynamic':
-        for v in port_value:
-            v['dst'] = ''
-    elif nat_type == 'dnat':
-        for v in port_value:
-            v['src'] = ''
-
     return {
         'name': '_'.join(names),
         'original_name': name,
@@ -1109,10 +1141,11 @@ def main():
     parser.add_argument('--log_file', help='Имя файла логирования', type=str)
     parser.add_argument('--name', help='Префикс имени выходного файла', type=str)
     args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
+    outpath = make_outpath(args.output_path)
 
     # Настройка вывода логов в файл
     if args.log_file:
-        fh = logging.FileHandler(args.log_file)
+        fh = logging.FileHandler(outpath / args.log_file)
         formatter = logging.Formatter('%(asctime)s %(levelname)-8s %(message)s')
         fh.setFormatter(formatter)
         log.addHandler(fh)
@@ -1133,7 +1166,7 @@ def main():
 
     # Сохранение промежуточного представления при отладке
     if log.root.level <= logging.DEBUG:
-        with open('debug.json', 'w') as f:
+        with open(outpath / 'debug.json', 'w') as f:
             json.dump(input_objects, f, indent=4, ensure_ascii=False)
 
     objects, proto_group = parse_objects(input_objects)
@@ -1154,7 +1187,7 @@ def main():
 
         members = []
         for member_name in obj.get('members', []):
-            if type(member_name) is dict:
+            if type(member_name) == dict:
                 members.append(member_name)
                 continue
 
@@ -1163,6 +1196,13 @@ def main():
                     members.append(embedded_obj)
 
         obj['members'] = members
+
+    if log.root.level <= logging.DEBUG:
+        with open(outpath / 'rules.json', 'w') as f:
+            json.dump(rules, f, indent=4, ensure_ascii=False)
+
+        with open(outpath / 'objects.json', 'w') as f:
+            json.dump(objects, f, indent=4, ensure_ascii=False)
 
     # Добавление объектов в правила
     members_types = {
@@ -1200,20 +1240,51 @@ def main():
             clean_rules.append(rule)
             continue
 
-        # Замена группы с одним сервисом на этот сервис в правилах NAT и отсеивание правил с остальными группами
+        # Замена группы с одним сетевым объектом на этот сетевой объект в правилах NAT и отсеивание правил с остальными группами
         if len(rule['value']) == 1 and rule['value'][0]['type'] == 'group':
             group = rule['value'][0]
             if len(group['members']) == 1:
                 rule['value'] = copy.deepcopy(group['members'])
+                log.info(f"Замена группы с одним сетевым объектом в транслированном пакете NAT - {rule['name']}")
             else:
+                log.warning(f"Пропускается NAT с группой сетевых объектов в транслированном пакете - {rule['name']}")
+                continue
+
+        # Замена группы с одним сервисом на этот сервис в правилах NAT и отсеивание правил с остальными группами
+        if len(rule['port_value']) == 1 and rule['port_value'][0]['type'] == 'group':
+            group = rule['port_value'][0]
+            if len(group['members']) == 1:
+                rule['port_value'] = copy.deepcopy(group['members'])
+                log.info(f"Группа с одним сервисом в правиле NAT - {rule['name']}")
+            else:
+                log.warning(f"Пропускается NAT с несколькими сервисами в одной группе - {rule['name']}")
                 continue
 
         # Отсеивание правил с типом dnat, у которых translated destination - сеть или диапазон
+        nat_type = rule['nat_type']
         value = rule.get('value', [])
-        if rule['nat_type'] == 'dnat' and len(value) > 0:
-            ip  = value[0].get('ip')
+        if nat_type == 'dnat' and len(value) > 0:
+            ip  = value[0].get('ip', '')
             if '/' in ip or '-' in ip:
+                log.warning(f"Пропускается NAT (dnat) с translated destination сетью или диапазоном - {rule['name']}")
                 continue
+
+        # Правка сервисов для NAT типов dynamic и dnat - mirrored
+        port_value = rule.get('port_value', [])
+        if nat_type == 'dynamic':
+            for srv in port_value:
+                srv['src'] = srv['dst']
+                srv['dst'] = ''
+            for srv in rule.get('service', []):
+                srv['src'] = srv['dst']
+                srv['dst'] = ''
+        elif nat_type == 'dnat':
+            for srv in port_value:
+                srv['dst'] = srv['src']
+                srv['src'] = ''
+            for srv in rule.get('service', []):
+                srv['dst'] = srv['src']
+                srv['src'] = ''
 
         clean_rules.append(rule)
 
@@ -1222,17 +1293,13 @@ def main():
 
     # Сохранение промежуточного представления при отладке
     if log.root.level <= logging.DEBUG:
-        with open('rules.json', 'w') as f:
+        with open(outpath / 'rules_filled.json', 'w') as f:
             json.dump(rules, f, indent=4, ensure_ascii=False)
-
-        with open('objects.json', 'w') as f:
-            json.dump(objects, f, indent=4, ensure_ascii=False)
 
     members_sections = [*members_types]
     members_sections.extend(['members', 'value', 'port_value'])
-    path = make_outpath(args.output_path)
 
-    print_report(path, rules, [*section_dict], members_sections)
+    print_report(outpath, rules, [*section_dict], members_sections)
     description_check(rules, members_sections)
 
     service_fields = [
@@ -1248,7 +1315,7 @@ def main():
                     continue
 
                 obj_type = obj.get('__internal_type')
-                if not obj_type is None:
+                if not obj_type == None:
                     stats[obj_type] += 1
 
                 for members_section in members_sections:
@@ -1258,7 +1325,7 @@ def main():
         if len(files_content) > 0:
             i = 1
             for file_content in files_content:
-                filename = path / OUTPUT_FILENAME.format(
+                filename = outpath / OUTPUT_FILENAME.format(
                     file_prefix,
                     pathlib.Path(args.input).stem,
                     f"{i if i > 1 else ''}")
