@@ -13,7 +13,11 @@ MAX_PORT = 65535
 MAX_DESCR_LEN = 1024
 MAX_OBJECTS_BORDER = 20000
 
-logging.basicConfig(encoding='utf-8', level=logging.INFO,
+if sys.version_info.major == 3 and sys.version_info.minor < 9:
+    logging.basicConfig(level=logging.INFO,
+    format='%(asctime)s %(levelname)-8s %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+else:
+    logging.basicConfig(encoding='utf-8', level=logging.INFO,
     format='%(asctime)s %(levelname)-8s %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 log = logging.getLogger(__name__)
 
@@ -988,8 +992,9 @@ def main():
     # В правиле может быть только один сервис, поэтому размножаем правила
     single_service_rules = []
     for rule in data:
-        if 'service' in rule.keys() and len(rule['service']) > 1:
-            for service in rule['service']:
+        services = rule.get('service', [])
+        if rule['__internal_type'] == 'NatRules' and len(services) > 1:
+            for service in services:
                 copied_rule = copy.deepcopy(rule)
                 service_name = service['name'] if 'name' in service.keys() else ""
                 copied_rule['name'] = f"{rule['name']}_{service_name}"
