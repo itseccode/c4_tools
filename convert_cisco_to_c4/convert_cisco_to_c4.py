@@ -687,7 +687,7 @@ def process_ServiceGroups(original_obj, obj, hostnames):
         services = original_obj['service-object']
         if not services == None:
             if type(services) == str:
-                ports = [services]
+                services = [services]
 
             for m in services:
                 service_line = m.split()
