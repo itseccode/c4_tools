@@ -2,7 +2,39 @@
 
 Импорт через API Континент 4 объектов IoC (Indicator of Compromise) от вендора [Security Vision](https://www.securityvision.ru/), включая IP адреса, URL, хэши файлов и домены (FQDN), из контейнера `*.json` в следующем формате:
 
-
+```
+{
+	"ioc":
+	{
+		"hashes":
+		[
+			{
+				"md5": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+				"filename": "sample.txt",
+				"filesize": 12345
+			}
+		],
+		"ips":
+		[
+			{
+				"ip": "10.10.10.10"
+			}
+		],
+		"domains":
+		[
+			{
+				"domain": "sample.com"
+			}
+		],
+		"urls":
+		[
+			{
+				"url": "http://sample.com/resource"
+			}
+		]
+	}
+}
+```
 
 # Основные функции
 
