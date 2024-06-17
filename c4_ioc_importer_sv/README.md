@@ -23,13 +23,13 @@
 		"domains":
 		[
 			{
-				"domain": "dom1.dom2.dom3"
+				"domain": "sample.com"
 			}
 		],
 		"urls":
 		[
 			{
-				"url": "http://sample.com/"
+				"url": "http://sample.com/resource"
 			}
 		]
 	}
