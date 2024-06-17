@@ -20,7 +20,7 @@
     },
     {
         "type": "url",
-        "value": "https://sample.com/malicious/resource",
+        "value": "https://sample.com/resource",
         "created_at": null,
         "modified_at": null,
         "collected_at": "YYYY-MM-DDTHH:MM:SS.MSS+TZ"
