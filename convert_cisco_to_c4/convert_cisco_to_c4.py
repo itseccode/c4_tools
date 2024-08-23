@@ -49,7 +49,7 @@ transport_protocols = {
     'sctp': 132
 }
 
-ports_names = {'ip': '0', 'icmp': '1', 'igmp': '2', 'ggp': '3', 'ipinip': '4', 'tcp': '6', 'echo': '7', 'egp': '8', 'igrp': '9', 'discard': '9', 'daytime': '13', 'udp': '17', 'chargen': '19', 'ftp-data': '20', 'ftp': '21', 'ssh': '22', 'telnet': '23', 'smtp': '25', 'time': '37', 'nameserver': '42', 'whois': '43', 'gre': '47', 'tacacs': '49', 'esp': '50', 'ah': '51', 'domain': '53', 'skip': '57', 'icmp6': '58', 'bootps': '67', 'bootpc': '68', 'tftp': '69', 'gopher': '70', 'finger': '79', 'http': '80', 'www': '80', 'eigrp': '88', 'ospf': '89', 'nos': '94', 'hostname': '101', 'pim': '103', 'pcp': '108', 'snp': '109', 'pop2': '109', 'pop3': '110', 'sunrpc': '111', 'vrrp': '112', 'ident': '113', 'nntp': '119', 'ntp': '123', 'netbios-ns': '137', 'netbios-dgm': '138', 'netbios-ssn': '139', 'imap4': '143', 'snmp': '161', 'snmptrap': '162', 'xdmcp': '177', 'bgp': '179', 'irc': '194', 'dnsix': '195', 'ldap': '389', 'mobile-ip': '434', 'https': '443', 'pim-auto-rp': '496', 'isakmp': '500', 'exec': '512', 'biff': '512', 'login': '513', 'who': '513', 'rsh': '514', 'syslog': '514', 'lpd': '515', 'talk': '517', 'rip': '520', 'uucp': '540', 'klogin': '543', 'kshell': '544', 'rtsp': '554', 'ldaps': '636', 'kerberos': '750', 'lotusnotes': '1352', 'citrix-ica': '1494', 'sqlnet': '1521', 'radius': '1645', 'radius-acct': '1646', 'h323': '1720', 'pptp': '1723', 'nfs': '2049', 'ctiqbe': '2748', 'cifs': '3020', 'sip': '5060', 'aol': '5190', 'secureid-udp': '5510', 'pcanywhere-data': '5631', 'pcanywhere-status': '5632'}
+ports_names = {'ip': '0', 'icmp': '1', 'igmp': '2', 'ggp': '3', 'ipinip': '4', 'tcp': '6', 'echo': '7', 'egp': '8', 'igrp': '9', 'discard': '9', 'daytime': '13', 'udp': '17', 'chargen': '19', 'ftp-data': '20', 'ftp': '21', 'ssh': '22', 'telnet': '23', 'smtp': '25', 'time': '37', 'nameserver': '42', 'whois': '43', 'gre': '47', 'tacacs': '49', 'esp': '50', 'ah': '51', 'domain': '53', 'skip': '57', 'icmp6': '58', 'bootps': '67', 'bootpc': '68', 'tftp': '69', 'gopher': '70', 'finger': '79', 'http': '80', 'www': '80', 'eigrp': '88', 'ospf': '89', 'nos': '94', 'hostname': '101', 'pim': '103', 'pcp': '108', 'snp': '109', 'pop2': '109', 'pop3': '110', 'sunrpc': '111', 'vrrp': '112', 'ident': '113', 'nntp': '119', 'ntp': '123', 'netbios-ns': '137', 'netbios-dgm': '138', 'netbios-ssn': '139', 'netbios-ss': '139', 'imap4': '143', 'snmp': '161', 'snmptrap': '162', 'xdmcp': '177', 'bgp': '179', 'irc': '194', 'dnsix': '195', 'ldap': '389', 'mobile-ip': '434', 'https': '443', 'pim-auto-rp': '496', 'isakmp': '500', 'exec': '512', 'biff': '512', 'login': '513', 'who': '513', 'rsh': '514', 'syslog': '514', 'lpd': '515', 'talk': '517', 'rip': '520', 'uucp': '540', 'klogin': '543', 'kshell': '544', 'rtsp': '554', 'ldaps': '636', 'kerberos': '750', 'lotusnotes': '1352', 'citrix-ica': '1494', 'sqlnet': '1521', 'radius': '1645', 'radius-acct': '1646', 'h323': '1720', 'pptp': '1723', 'nfs': '2049', 'ctiqbe': '2748', 'cifs': '3020', 'sip': '5060', 'aol': '5190', 'secureid-udp': '5510', 'pcanywhere-data': '5631', 'pcanywhere-status': '5632', 'msrpc': '135', 'cmd': '514', 'non500-isakmp': '4500'}
 icmp_type_names = {
     'echo-reply': 0,
     'unreachable': 3,
@@ -201,7 +201,7 @@ def print_report(filepath, objects, sections, members_sections):
         report_file.write("\n")
 
     with open(filename, "w", encoding="utf8") as report_file:
-        report_file.write("Система-источник: FortiGate\n")
+        report_file.write("Система-источник: Cisco\n")
         report_file.write("Система-назначение: Континент 4\n")
         for section in sections:
             index = 1
@@ -320,6 +320,8 @@ def get_cisco_port(port_line):
 
     if not port.isdigit():
         port = ports_names.get(port)
+        if port == None:
+            log.error(f"Порт {port_line[1]} не определён в списке портов")
 
     if operator == 'gt':
         port = f"{port}-65535"
@@ -574,6 +576,10 @@ def process_NetObjectGroups(original_obj, obj, hostnames):
 
         for m in members:
             netobj_list = m.split()
+            # для пропуска (network-object ::/0)
+            if len(netobj_list) == 1:
+                continue
+
             if netobj_list[0] in ['host', 'object']:
                 name = m[m.find(' ') + 1:]
                 if re.match(IP_REGEX, name):
@@ -774,6 +780,20 @@ def parse_rules(input_objects, proto_group):
 
     del original_fw_rules
 
+    # ip access-list extended A_2000_UB_0_in
+    ip_dict = input_objects.get('ip', {})
+    original_fw_rules = [{x: ip_dict[x]} for x in ip_dict if x.startswith('access-list')]
+    for original_rule in original_fw_rules:
+        parsed_rule = parse_ip_access_list_rule(original_rule, proto_group)
+        if not parsed_rule == None:
+            add_to_list(parsed_rules, parsed_rule)
+            error_counter['FilterRules']['done'] += 1
+        else:
+            error_counter['FilterRules']['warning'] += 1
+            log.warning(f"Правило некорректное: {original_rule}")
+
+    del original_fw_rules
+
     original_nat_rules = input_objects.get('nat', {})
     for original_rule in original_nat_rules:
         parsed_rule = parse_nat_rule(original_rule)
@@ -944,6 +964,181 @@ def parse_fw_rule(original_rule, proto_group):
         'logging': False
     }
     return rule
+
+
+def parse_ip_access_list_rule(original_rule, proto_group):
+    out_rules = []
+    any_list = ['any', 'any4', 'any6']
+
+    rule_key = list(original_rule.keys())[0]
+    rule_list = rule_key.split()
+    rule_type = rule_list[1]
+    if rule_type == 'remark':
+        return []
+
+    if not rule_type in ['extended', 'standard']:
+        log.error(f"Неподдерживаемое правило МЭ: {original_rule}")
+        return None
+
+    name = ' '.join(rule_list[2:])
+    access_list_rules = []
+    for k in original_rule[rule_key]:
+        add_to_list(access_list_rules, f"{k} {original_rule[rule_key][k]}")
+
+    # rules_out_dict = {}
+    for access_rule in access_list_rules:
+        access_list_rule = access_rule.split()
+        priority_number = access_list_rule[0]
+        action = access_list_rule[1]
+        proto = ''
+        dst_port = ''
+        src_port = ''
+        src = []
+        dst = []
+        service = []
+
+        # access_list_rule - приоритет (0), действие (1)
+        i = 2
+        objects_counter = 0
+        while i < len(access_list_rule):
+            word = access_list_rule[i]
+
+            # сетевой объект в виде any
+            if word in any_list:
+                objects_counter += 1
+                i += 1
+                continue
+
+            if proto == '':
+                # для standard
+                if word == 'host' or re.match(IP_REGEX, word):
+                    proto = []
+                    continue
+
+                # format: группа протоколов (3), ...
+                if word in ['object-group', 'object']:
+                    proto = proto_group.get(access_list_rule[i + 1], [])
+                    # format: сервис (3), сетевой объект (4), сетевой объект (5)
+                    if proto == []:
+                        service.append(access_list_rule[i + 1])
+
+                    i += 2
+                    continue
+
+                # протокол, прописанный в самом правиле
+                proto = word
+                i += 1
+                continue
+
+            if word in ['host', 'object', 'object-group'] or re.match(IP_REGEX, word):
+                object = []
+
+                if re.match(IP_REGEX, word):
+                    if i + 1 < len(access_list_rule) and re.match(IP_REGEX, access_list_rule[i + 1]):
+                        netmask = get_netmask(access_list_rule[i + 1])
+                        object = [create_netobject(name=f"{word}_{netmask}", ip=f"{word}/{netmask}")]
+                    else:
+                        object = [create_netobject(name=f"{word}", ip=f"{word}")]
+
+                if word in ['object', 'object-group']:
+                    object = [access_list_rule[i + 1]]
+
+                if word == 'host':
+                    object = [create_netobject(name=access_list_rule[i + 1], ip=access_list_rule[i + 1])]
+
+                if objects_counter == 0:
+                    src = object
+
+                if objects_counter == 1:
+                    dst = object
+
+                # сервис после двух сетевых объектов
+                if objects_counter == 2:
+                    service.extend(object)
+
+                objects_counter += 1
+                i += 1
+
+            # service port
+            if word in ['gt', 'lt', 'range', 'eq', 'all']:
+                if objects_counter == 1:
+                    src_port = get_cisco_port(access_list_rule[i:])
+                if objects_counter == 2:
+                    dst_port = get_cisco_port(access_list_rule[i:])
+
+            i += 1
+
+        if type(proto) == str: proto = [proto]
+
+        for protocol in proto:
+            # если протокол не указан в самом правиле
+            # cервисы уже должны быть заполнены
+            if protocol == '':
+                continue
+
+            if protocol in transport_protocols.keys():
+                if not src_port == '':
+                    service.append({
+                        'name': f"{name}_{protocol}_{src_port}",
+                        'original_name': f"{name}_{protocol}_{src_port}",
+                        'description': '',
+                        'original_description': '',
+                        'requires_keep_connections': False,
+                        '__internal_type': 'Services',
+                        'type': 'service',
+                        'proto': transport_protocols[protocol],
+                        'dst': '',
+                        'src': src_port
+                    })
+                if not dst_port == '':
+                    service.append({
+                        'name': f"{name}_{protocol}_{dst_port}",
+                        'original_name': f"{name}_{protocol}_{dst_port}",
+                        'description': '',
+                        'original_description': '',
+                        'requires_keep_connections': False,
+                        '__internal_type': 'Services',
+                        'type': 'service',
+                        'proto': transport_protocols[protocol],
+                        'dst': dst_port,
+                        'src': ''
+                    })
+            elif protocol == 'icmp':
+                service.append({
+                    'name': f"{name}_{protocol}",
+                    'original_name': f"{name}_{protocol}",
+                    'description': '',
+                    'original_description': '',
+                    'requires_keep_connections': False,
+                    '__internal_type': 'Services',
+                    'type': 'service',
+                    'proto': 1,
+                    'icmp_type': None,
+                    'icmp_code': None
+                })
+
+        out_action = 'pass' if action == 'permit' else 'block'
+        out_rules.append({
+            'name': f"{name} {priority_number}",
+            'original_name': name,
+            'description': '',
+            'original_description': '',
+            'is_enabled': False,
+            '__internal_type': 'FilterRules',
+            'src': src,
+            'dst': dst,
+            'service': service,
+            'params': [],
+            'install_on': [],
+            'is_inverse_src': False,
+            'is_inverse_dst': False,
+            'passips': False,
+            'rule_applications': [],
+            'rule_action': out_action,
+            'logging': False
+        })
+
+    return out_rules
 
 
 def parse_nat_rule(original_rule):
@@ -1310,6 +1505,9 @@ def main():
 
     def write_output_rules(files_content, file_prefix):
         def collect_stats(objs, stats):
+            if objs == None:
+                return
+
             for obj in objs:
                 if not type(obj) == dict:
                     continue
